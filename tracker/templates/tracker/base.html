@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Presence</title>
+<link rel="stylesheet" href="/static/tracker/app.css">
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+<div class="brand"><span class="brand-dot"></span><div><b>SMART PRESENCE</b><small>Identity Intelligence</small></div></div>
+<nav>
+<a href="/" class="nav">▣ Dashboard</a>
+<a href="/" class="nav">◉ Live Monitor</a>
+{% if user.is_authenticated %}
+<a href="/people/" class="nav">👥 People</a>
+<a href="/events-page/" class="nav">◫ Presence & Events</a>
+<a href="/analytics/" class="nav">◈ Analytics</a>
+<a href="/evidence/" class="nav">▣ Event Evidence</a>
+<a href="/privacy/" class="nav">⌁ Privacy Center</a>
+<a href="/settings/" class="nav">⚙ Settings</a>
+{% endif %}
+</nav>
+<div class="side-bottom">
+{% if user.is_authenticated %}
+<a class="nav" href="/logout/">⇥ Sign out</a>
+{% else %}
+<a class="nav" href="/admin-login/?next=/admin-panel/">⚿ Admin login</a>
+{% endif %}
+<div class="privacy-pill">⌁ NO GPS TRACKING</div>
+</div>
+</aside>
+<main class="main">
+<header class="topbar">
+<div><span class="eyebrow">PRIVACY-FIRST BIOMETRIC MONITORING</span><h1>{% block title %}Live Security Monitor{% endblock %}</h1></div>
+<div class="system-online"><i></i> SYSTEM ONLINE</div>
+</header>
+{% block content %}{% endblock %}
+</main>
+</div>
+<form style="display:none">{% csrf_token %}</form>
+<div id="toast" class="toast"></div>
+{% block scripts %}{% endblock %}
+</body>
+</html>
