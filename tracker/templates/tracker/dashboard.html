@@ -1,0 +1,156 @@
+{% extends 'tracker/base.html' %}
+{% block title %}Live Security Monitor{% endblock %}
+{% block content %}
+<div class="grid g4">
+<div class="card"><span class="muted">REGISTERED</span><div class="stat blue" id="registered">{{people_count}}</div></div>
+<div class="card"><span class="muted">PRESENT NOW</span><div class="stat green" id="present">{{present_count}}</div></div>
+<div class="card"><span class="muted">UNKNOWN EVENTS</span><div class="stat red" id="unknown">{{unknown_count}}</div></div>
+<div class="card"><span class="muted">AI ENGINE</span><div class="stat green">ONLINE</div></div>
+</div>
+<div class="monitor" style="margin-top:16px">
+<section class="card camera-card">
+<div class="camera-wrap">
+<video id="video" autoplay muted playsinline></video>
+<canvas id="canvas" hidden></canvas>
+<div class="camera-placeholder" id="placeholder">Starting camera…<br><small>Allow browser camera access.</small></div>
+<div class="camera-badge"><b>● LIVE</b> &nbsp; MULTI-FACE ENGINE</div>
+<div id="boxes"></div>
+</div>
+<div style="padding:14px;display:flex;justify-content:space-between;align-items:center">
+<span class="muted">Camera · Browser Webcam · No GPS collected</span>
+<button class="btn secondary" id="cameraBtn" type="button">Start camera</button>
+</div>
+</section>
+<section class="card">
+<div style="display:flex;justify-content:space-between"><b>LIVE EVENTS</b><span class="pill" id="fps">SCANNING</span></div>
+<div class="event-list" id="events"><div class="empty">Waiting for camera events…</div></div>
+</section>
+</div>
+<div class="grid g3" style="margin-top:16px">
+<div class="card"><b>ENGINE STATUS</b><div class="kv"><span>Face detection</span><span class="green">ONLINE</span></div><div class="kv"><span>Face recognition</span><span class="green">ONLINE</span></div><div class="kv"><span>Liveness gate</span><span class="green">ONLINE</span></div><div class="kv"><span>Database</span><span class="green">ONLINE</span></div></div>
+<div class="card"><b>SECURITY MODE</b><p class="muted">Unknown identities create an evidence event and can capture a snapshot when enabled.</p><a class="btn" href="/evidence/">Open evidence</a></div>
+<div class="card"><b>PRIVACY CENTER</b><p class="muted">No GPS coordinates, continuous location history, or raw live video are stored by this application.</p><a class="btn secondary" href="/privacy/">View privacy</a></div>
+</div>
+<div id="alert" class="alert"><div class="alert-box"><div style="font-size:70px">🚨</div><h2>UNKNOWN PERSON DETECTED</h2><p>Identity is not registered. Security event created.</p><button class="btn" type="button" onclick="dismissAlert()">ACKNOWLEDGE</button></div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+'use strict';
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const ctx=canvas?canvas.getContext('2d'):null;
+const boxes=document.getElementById('boxes');
+const eventsEl=document.getElementById('events');
+const cameraBtn=document.getElementById('cameraBtn');
+const placeholder=document.getElementById('placeholder');
+const fps=document.getElementById('fps');
+let running=false,stream=null,client='client-'+Math.random().toString(36).slice(2),lastAlert=0;
+
+function getCookie(name){
+ const row=document.cookie.split('; ').find(x=>x.startsWith(name+'='));
+ return row?decodeURIComponent(row.split('=').slice(1).join('=')):'';
+}
+function beep(){
+ try{
+  const A=window.AudioContext||window.webkitAudioContext;if(!A)return;
+  const a=new A(),o=a.createOscillator(),g=a.createGain();
+  o.frequency.value=760;g.gain.value=.08;o.connect(g);g.connect(a.destination);
+  o.start();o.stop(a.currentTime+.22);
+ }catch(e){}
+}
+function alertUnknown(){
+ if(Date.now()-lastAlert<4000)return;
+ lastAlert=Date.now();
+ const a=document.getElementById('alert');if(a)a.classList.add('show');beep();
+}
+window.dismissAlert=function(){
+ const a=document.getElementById('alert');if(a)a.classList.remove('show');
+};
+function draw(results){
+ if(!boxes||!video.videoWidth||!video.videoHeight)return;
+ boxes.innerHTML='';
+ (results||[]).forEach(function(r){
+  const b=r.bbox||[0,0,0,0],x=+b[0]||0,y=+b[1]||0,w=+b[2]||0,h=+b[3]||0;
+  const el=document.createElement('div');
+  el.className='overlay-box '+(r.recognized?'':'unknown');
+  el.style.left=x/video.videoWidth*100+'%';el.style.top=y/video.videoHeight*100+'%';
+  el.style.width=w/video.videoWidth*100+'%';el.style.height=h/video.videoHeight*100+'%';
+  el.innerHTML='<b>'+(r.recognized?(r.name||'VERIFIED'):'UNKNOWN')+'</b><br><small>'+
+   (r.recognized?'✓ VERIFIED '+Math.round((+r.score||0)*100)+'%':'⚠ '+Math.round((+r.score||0)*100)+'%')+
+   ' · '+(r.liveness?'LIVE':'VERIFY')+'</small>';
+  boxes.appendChild(el);
+ });
+}
+function addEvents(results){
+ if(!eventsEl)return;
+ const now=new Date().toLocaleTimeString();
+ (results||[]).forEach(function(r){
+  const d=document.createElement('div');d.className='event';
+  d.innerHTML='<strong class="'+(r.recognized?'green':'red')+'">'+
+   (r.recognized?'🟢 '+(r.name||'Verified')+' verified':'🔴 '+(r.message||'Unknown person detected'))+
+   '</strong><small>'+now+(r.recognized?' · '+Math.round((+r.score||0)*100)+'% confidence':' · evidence captured')+'</small>';
+  eventsEl.prepend(d);
+ });
+ while(eventsEl.children.length>10)eventsEl.lastElementChild.remove();
+}
+async function refreshStats(){
+ try{
+  const r=await fetch('/events/',{credentials:'same-origin'});if(!r.ok)return;
+  const j=await r.json();
+  const p=document.getElementById('present'),u=document.getElementById('unknown');
+  if(p)p.textContent=(j.present||[]).length;
+  if(u)u.textContent=(j.events||[]).filter(e=>e.type==='unknown').length;
+ }catch(e){}
+}
+async function scan(){
+ if(!running||!canvas||!ctx)return;
+ if(video.readyState<2||!video.videoWidth||!video.videoHeight){setTimeout(scan,850);return;}
+ canvas.width=video.videoWidth;canvas.height=video.videoHeight;ctx.drawImage(video,0,0);
+ canvas.toBlob(async function(blob){
+  if(!blob||!running)return;
+  try{
+   const r=await fetch('/recognize/',{method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'image/jpeg','X-Client-ID':client,'X-CSRFToken':getCookie('csrftoken')},body:blob});
+   if(!r.ok)return;
+   const j=await r.json();
+   if(j.status==='success'){
+    const results=j.results||[];draw(results);
+    if(results.some(x=>!x.recognized))alertUnknown();
+    addEvents(results);if(fps)fps.textContent=(j.face_count||0)+' FACE(S) · LIVE';refreshStats();
+   }
+  }catch(e){console.error('Recognition request failed:',e);}
+ },'image/jpeg',.78);
+ if(running)setTimeout(scan,850);
+}
+async function startCamera(){
+ console.log('[SmartPresence] Start camera clicked');
+ if(running)return;
+ try{
+  if(!window.isSecureContext)throw new Error('Camera requires HTTPS or localhost. Open the forwarded HTTPS app URL.');
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error('Camera API is unavailable in this browser/context.');
+  stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720}},audio:false});
+  video.srcObject=stream;await video.play();running=true;
+  if(placeholder)placeholder.style.display='none';
+  if(cameraBtn)cameraBtn.textContent='Stop camera';
+  console.log('[SmartPresence] Camera started:',video.videoWidth,video.videoHeight);scan();
+ }catch(e){
+  console.error('[SmartPresence] Camera start failed:',e);
+  if(placeholder)placeholder.innerHTML='Camera unavailable.<br><small>'+
+   ((e&&e.name)?e.name+': ':'')+((e&&e.message)?e.message:'Unknown camera error')+'</small>';
+ }
+}
+function stopCamera(){
+ running=false;
+ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+ if(video)video.srcObject=null;
+ if(cameraBtn)cameraBtn.textContent='Start camera';
+ if(placeholder){placeholder.style.display='';placeholder.innerHTML='Camera stopped.<br><small>Click Start camera to begin.</small>';}
+ if(fps)fps.textContent='CAMERA STOPPED';
+}
+if(cameraBtn)cameraBtn.addEventListener('click',function(){running?stopCamera():startCamera();});
+window.addEventListener('load',function(){console.log('[SmartPresence] Dashboard script loaded');refreshStats();startCamera();});
+setInterval(refreshStats,5000);
+})();
+</script>
+{% endblock %}
