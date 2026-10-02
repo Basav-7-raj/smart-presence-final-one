@@ -1,0 +1,5 @@
+from django.urls import path
+from . import views
+urlpatterns=[
+ path('',views.dashboard,name='dashboard'), path('admin-panel/',views.admin_panel,name='admin_panel'), path('register/',views.register_face,name='register'), path('recognize/',views.recognize,name='recognize'), path('events/',views.events,name='events_api'), path('people/',views.people_page,name='people'), path('events-page/',views.events_page,name='events_page'), path('analytics/',views.analytics,name='analytics'), path('privacy/',views.privacy,name='privacy'), path('settings/',views.settings_page,name='settings_page'), path('settings/save/',views.save_settings,name='save_settings'), path('people/<int:pk>/toggle/',views.toggle_person,name='toggle_person'), path('people/<int:pk>/delete/',views.delete_person,name='delete_person'), path('events/<int:pk>/ack/',views.acknowledge,name='ack'), path('evidence/',views.evidence,name='evidence'), path('reports/csv/',views.report_csv,name='report_csv'), path('reports/pdf/',views.report_pdf,name='report_pdf'), path('reset-demo/',views.reset_demo,name='reset_demo'),
+]
