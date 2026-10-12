@@ -1,6 +1,26 @@
 import json
 from django.db import models
 
+
+class LocationSite(models.Model):
+    """A fixed monitored camera/site location, not a person's live location."""
+    name = models.CharField(max_length=120, unique=True)
+    address = models.CharField(max_length=255, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+import json
+from django.db import models
+
 class PersonProfile(models.Model):
     name = models.CharField(max_length=100)
     student_id = models.CharField(max_length=50, unique=True)
@@ -19,6 +39,7 @@ class PresenceRecord(models.Model):
     device_source = models.CharField(max_length=120, default='Browser Webcam')
     confidence = models.FloatField(default=0.0)
     liveness_passed = models.BooleanField(default=True)
+    site = models.ForeignKey(LocationSite, null=True, blank=True, on_delete=models.SET_NULL, related_name='presence_records')
     class Meta: ordering = ['-timestamp']
 
 class UnknownEvent(models.Model):
@@ -30,6 +51,7 @@ class UnknownEvent(models.Model):
     acknowledged = models.BooleanField(default=False)
     severity = models.CharField(max_length=20, default='HIGH')
     message = models.CharField(max_length=200, default='Unknown person detected')
+    site = models.ForeignKey(LocationSite, null=True, blank=True, on_delete=models.SET_NULL, related_name='unknown_events')
     class Meta: ordering = ['-timestamp']
 
 class SystemEvent(models.Model):
@@ -39,6 +61,7 @@ class SystemEvent(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
     severity = models.CharField(max_length=20, default='INFO')
     person = models.ForeignKey(PersonProfile, null=True, blank=True, on_delete=models.SET_NULL)
+    site = models.ForeignKey(LocationSite, null=True, blank=True, on_delete=models.SET_NULL, related_name='system_events')
     class Meta: ordering = ['-timestamp']
 
 class SystemSetting(models.Model):
