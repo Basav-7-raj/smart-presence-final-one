@@ -11,7 +11,7 @@ from django.http import JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
-from .face_engine import detect_faces, extract_best_feature, compare_features, feature_from_json, extract_feature_from_face
+from .face_engine import detect_faces, extract_best_feature, compare_features, feature_from_json, extract_feature_from_face, models_ready
 from .models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent, SystemSetting
 
 DEFAULTS = {'match_threshold':'0.363','liveness_threshold':'0.018','unknown_alert':'1','sound_alert':'1','auto_capture_unknown':'1','duplicate_window':'10','camera':'0','theme':'dark'}
@@ -101,6 +101,32 @@ def recognize(request):
                 results.append({'recognized':False,'message':reason,'score':round(max(0,float(score)),3),'liveness':live_ok,'bbox':face['bbox'],'event_id':ev.id})
         return JsonResponse({'status':'success','recognized':any(x['recognized'] for x in results),'face_count':len(results),'results':results,'threshold':threshold,'fps_hint':0})
     except Exception as exc: return JsonResponse({'status':'error','message':str(exc)},status=500)
+
+
+@require_GET
+def health(request):
+    """Expose only operational readiness flags; never return model or person data."""
+    from django.db import connection
+    database_ok = False
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            database_ok = cursor.fetchone() == (1,)
+    except Exception:
+        database_ok = False
+    model_files_ready = False
+    try:
+        model_files_ready = bool(models_ready())
+    except Exception:
+        model_files_ready = False
+    endpoint_available = True  # This view itself is running; inference readiness is separate.
+    return JsonResponse({
+        'status': 'ok' if database_ok and model_files_ready else 'degraded',
+        'database': database_ok,
+        'models_ready': model_files_ready,
+        'recognition_endpoint': endpoint_available,
+        'ready': database_ok and model_files_ready,
+    }, status=200 if database_ok else 503)
 
 @require_GET
 def events(request):
