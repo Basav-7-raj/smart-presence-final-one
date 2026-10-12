@@ -129,15 +129,51 @@ test('playback failure releases the stream acquired before video.play rejects', 
   h.controller.dispose();
 });
 
-test('HTTP 403 from recognition is surfaced instead of being treated as success', async () => {
-  const h = harness({ fetch: async () => ({
-    ok: false, status: 403, json: async () => ({ status: 'error' })
-  }) });
+for (const status of [403, 404, 500]) {
+  test('recognition HTTP ' + status + ' is surfaced instead of being treated as success', async () => {
+    const h = harness({ fetch: async () => ({
+      ok: false, status,
+      json: async () => status === 500 ? { status: 'error', message: 'Model unavailable.' } : { status: 'error' }
+    }) });
+    await h.controller.start();
+    await h.flush();
+    assert.match(h.errors.join(' '), new RegExp(String(status) + '|CSRF|forbidden|Model unavailable', 'i'));
+    assert.equal(h.results.length, 0);
+    assert.ok(h.timers.size <= 1);
+    h.controller.dispose();
+  });
+}
+
+test('denied camera permission transitions to ERROR with a helpful message', async () => {
+  const h = harness({
+    getUserMedia: async () => {
+      const error = new Error('permission denied');
+      error.name = 'NotAllowedError';
+      throw error;
+    }
+  });
   await h.controller.start();
-  await h.flush();
-  assert.match(h.errors.join(' '), /403|CSRF|forbidden/i);
-  assert.equal(h.results.length, 0);
-  assert.ok(h.timers.size <= 1);
+  assert.equal(h.controller.state, 'ERROR');
+  assert.match(h.states[h.states.length - 1].message, /permission was denied/i);
+  assert.equal(h.tracks.length, 0);
+  h.controller.dispose();
+});
+
+test('stopping while permission is pending releases a late-arriving stream', async () => {
+  let resolveMedia;
+  const h = harness({ getUserMedia: () => new Promise((resolve) => { resolveMedia = resolve; }) });
+  const starting = h.controller.start();
+  h.controller.stop();
+  const track = {
+    readyState: 'live', stopped: false,
+    addEventListener() {},
+    stop() { this.stopped = true; this.readyState = 'ended'; }
+  };
+  resolveMedia({ getTracks: () => [track], getVideoTracks: () => [track] });
+  await starting;
+  assert.equal(h.controller.state, 'IDLE');
+  assert.equal(track.stopped, true);
+  assert.equal(h.fetchCalls(), 0);
   h.controller.dispose();
 });
 
