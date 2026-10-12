@@ -1,0 +1,137 @@
+{% extends 'tracker/base.html' %}
+{% block title %}Location-Aware Security Monitoring{% endblock %}
+{% block content %}
+<div class="grid g3">
+  <div class="card"><span class="muted">MONITORED SITES</span><div class="stat blue" id="siteCount">{{ sites|length }}</div></div>
+  <div class="card"><span class="muted">ACTIVE CAMERA SITE</span><div class="stat green" id="activeSiteName">{% if active_site %}{{ active_site.name }}{% else %}NOT SELECTED{% endif %}</div></div>
+  <div class="card"><span class="muted">LOCATION PRIVACY</span><div class="stat">FIXED SITES ONLY</div><p class="muted">No individual GPS tracking. A site is attached to recognition events from this browser camera.</p></div>
+</div>
+<div class="grid g2" style="margin-top:16px;align-items:start">
+  <section class="card">
+    <h3>Add / update a monitored camera site</h3>
+    <p class="muted">Save the fixed location of a camera, entrance, lab or monitored area. Coordinates are optional for address-only sites, but required for a map pin.</p>
+    <form id="siteForm">
+      {% csrf_token %}
+      <label for="siteName">Site name</label><input class="input" id="siteName" name="name" required maxlength="120" placeholder="Main entrance camera">
+      <label for="siteAddress">Address / description</label><input class="input" id="siteAddress" name="address" maxlength="255" placeholder="Building, street, city">
+      <div class="grid g2">
+        <div><label for="siteLat">Latitude</label><input class="input" id="siteLat" name="latitude" type="number" min="-90" max="90" step="any" placeholder="12.971599"></div>
+        <div><label for="siteLon">Longitude</label><input class="input" id="siteLon" name="longitude" type="number" min="-180" max="180" step="any" placeholder="77.594566"></div>
+      </div>
+      <div class="toolbar" style="margin-top:12px">
+        <button class="btn secondary" type="button" id="useLocation">Use this device's location for the fixed site</button>
+        <label class="muted"><input type="checkbox" name="select_site" value="1" checked> Use for new camera events</label>
+      </div>
+      <button class="btn" style="margin-top:12px" type="submit">Save monitored site</button>
+      <p id="siteMessage" class="muted" role="status" aria-live="polite"></p>
+    </form>
+  </section>
+  <section class="card">
+    <h3>Live monitored-site map</h3>
+    <p class="muted">Pins represent fixed camera sites. Select a pin to view its site and recent event counts. Map tiles are supplied by OpenStreetMap.</p>
+    <div id="siteMap" style="height:430px;border-radius:12px;overflow:hidden;background:#101827"></div>
+    <p class="muted" id="mapMessage">Loading monitored sites…</p>
+  </section>
+</div>
+<div class="card" style="margin-top:16px">
+  <h3>Configured sites</h3>
+  <div id="siteList" class="muted">Loading sites…</div>
+</div>
+<div class="grid g2" style="margin-top:16px">
+  <div class="card"><h3>Recent presence records</h3><div id="presenceList" class="muted">Loading records…</div></div>
+  <div class="card"><h3>Unknown-person alerts & evidence</h3><div id="unknownList" class="muted">Loading alerts…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+(function(){
+  const csrf = document.querySelector('[name=csrfmiddlewaretoken]').value;
+  const form = document.getElementById('siteForm');
+  const msg = document.getElementById('siteMessage');
+  let map = null;
+  let markers = [];
+  const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const when = value => { try { return new Date(value).toLocaleString(); } catch (_) { return value; } };
+  if (window.L) {
+    map = L.map('siteMap').setView([20.5937,78.9629], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom:19, attribution:'&copy; OpenStreetMap contributors'
+    }).addTo(map);
+  } else {
+    document.getElementById('mapMessage').textContent = 'Map library did not load. Check network access to unpkg.com.';
+  }
+  document.getElementById('useLocation').onclick = () => {
+    if (!navigator.geolocation) { msg.textContent = 'This browser does not provide location permission.'; return; }
+    msg.textContent = 'Requesting permission to locate this fixed camera site…';
+    navigator.geolocation.getCurrentPosition(position => {
+      document.getElementById('siteLat').value = position.coords.latitude.toFixed(6);
+      document.getElementById('siteLon').value = position.coords.longitude.toFixed(6);
+      msg.textContent = 'Coordinates filled in. Save the site to use them. This does not track people.';
+    }, error => {
+      msg.textContent = 'Could not get coordinates: ' + error.message + '. You can enter the fixed site coordinates manually.';
+    }, {enableHighAccuracy:true, timeout:10000, maximumAge:60000});
+  };
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const data = new FormData(form);
+    try {
+      const response = await fetch('/locations/save/', {method:'POST', headers:{'X-CSRFToken':csrf}, body:data, credentials:'same-origin'});
+      const result = await response.json();
+      msg.textContent = result.message || 'Could not save site.';
+      msg.className = result.status === 'success' ? 'green' : 'red';
+      if (response.ok) { form.reset(); await load(); }
+    } catch (error) {
+      msg.textContent = 'Save failed: ' + error.message;
+      msg.className = 'red';
+    }
+  };
+  async function post(url) {
+    const response = await fetch(url,{method:'POST',headers:{'X-CSRFToken':csrf},credentials:'same-origin'});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message || 'Request failed');
+    return result;
+  }
+  async function load() {
+    try {
+      const response = await fetch('/locations/data/', {credentials:'same-origin'});
+      if (!response.ok) throw new Error('HTTP ' + response.status + ' — sign in as admin if prompted.');
+      const data = await response.json();
+      document.getElementById('siteCount').textContent = data.sites.length;
+      const active = data.sites.find(s => s.selected);
+      document.getElementById('activeSiteName').textContent = active ? active.name : 'NOT SELECTED';
+      document.getElementById('siteList').innerHTML = data.sites.length ? '<table class="table"><tr><th>Site</th><th>Coordinates</th><th>Status</th><th>Actions</th></tr>' + data.sites.map(s => {
+        const coords = s.latitude != null && s.longitude != null ? Number(s.latitude).toFixed(5)+', '+Number(s.longitude).toFixed(5) : 'Address only — no map pin';
+        return '<tr><td><b>'+esc(s.name)+'</b><br><small>'+esc(s.address)+'</small></td><td>'+esc(coords)+'</td><td>'+(s.selected?'<span class="green">ACTIVE CAMERA SITE</span>':'Configured')+'</td><td>'+(s.selected?'': '<button class="btn secondary" data-select="'+s.id+'">Use for new events</button> ')+'<button class="btn danger" data-delete="'+s.id+'">Delete site</button></td></tr>';
+      }).join('')+'</table>' : '<p>No sites configured yet. Add your first camera site above.</p>';
+      document.getElementById('presenceList').innerHTML = data.presence.length ? '<table class="table"><tr><th>Person</th><th>Time</th><th>Site</th></tr>'+data.presence.map(r=>'<tr><td>'+esc(r.name)+'<br><small>'+esc(r.student_id)+'</small></td><td>'+esc(when(r.timestamp))+'</td><td>'+esc(r.site)+'</td></tr>').join('')+'</table>' : '<p>No presence records yet.</p>';
+      document.getElementById('unknownList').innerHTML = data.unknowns.length ? '<table class="table"><tr><th>Alert</th><th>Time / site</th><th>Evidence</th></tr>'+data.unknowns.map(e=>'<tr><td class="red">'+esc(e.message)+'<br>'+esc(e.severity)+'</td><td>'+esc(when(e.timestamp))+'<br>'+esc(e.site)+'</td><td>'+(e.snapshot?'<a target="_blank" rel="noopener" href="'+esc(e.snapshot)+'">Open snapshot</a>':'No snapshot')+'</td></tr>').join('')+'</table>' : '<p>No unknown-person alerts yet.</p>';
+      if (map) {
+        markers.forEach(marker => map.removeLayer(marker)); markers = [];
+        const located = data.sites.filter(s => s.latitude != null && s.longitude != null);
+        located.forEach(s => {
+          const marker = L.marker([s.latitude,s.longitude]).addTo(map);
+          marker.bindPopup('<b>'+esc(s.name)+'</b><br>'+esc(s.address||'')+'<br>'+(s.selected?'Active camera site':'Configured site'));
+          markers.push(marker);
+        });
+        if (located.length) { const group=L.featureGroup(markers); map.fitBounds(group.getBounds().pad(0.18), {maxZoom:15}); document.getElementById('mapMessage').textContent=located.length+' site pin(s) shown. Address-only sites are listed but cannot be pinned until coordinates are entered.'; }
+        else { map.setView([20.5937,78.9629],5); document.getElementById('mapMessage').textContent='No coordinates yet. Enter latitude and longitude or use the location button for the fixed camera site.'; }
+      }
+      document.querySelectorAll('[data-select]').forEach(button => button.onclick = async () => {
+        try { await post('/locations/'+button.dataset.select+'/select/'); await load(); }
+        catch(error) { alert(error.message); }
+      });
+      document.querySelectorAll('[data-delete]').forEach(button => button.onclick = async () => {
+        if (!confirm('Delete this site? Historical presence and alert records will remain, but become unassigned.')) return;
+        try { await post('/locations/'+button.dataset.delete+'/delete/'); await load(); }
+        catch(error) { alert(error.message); }
+      });
+    } catch (error) {
+      document.getElementById('mapMessage').textContent = 'Could not load location data: ' + error.message;
+    }
+  }
+  load();
+})();
+</script>
+{% endblock %}
