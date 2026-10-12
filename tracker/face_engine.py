@@ -76,4 +76,15 @@ def feature_to_json(feature):
     return json.dumps(feature)
 
 def feature_from_json(value):
+    """Read legacy single embeddings and newer multi-photo embedding sets."""
     return json.loads(value)
+
+def feature_templates_from_json(value):
+    """Return a list of 1-D embeddings, preserving compatibility with old rows."""
+    parsed = feature_from_json(value)
+    if not isinstance(parsed, list) or not parsed:
+        return []
+    # Legacy format: [float, float, ...]. Multi-photo format: [[...], [...]].
+    if isinstance(parsed[0], (int, float)):
+        return [parsed]
+    return [item for item in parsed if isinstance(item, list) and item]
