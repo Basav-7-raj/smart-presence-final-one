@@ -1,4 +1,4 @@
-import csv, io, json, os, time
+import csv, io, json, os, time, logging
 from datetime import timedelta
 from pathlib import Path
 import cv2
@@ -14,6 +14,8 @@ from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import ensure_csrf_cookie
 from .face_engine import detect_faces, extract_best_feature, compare_features, feature_from_json, extract_feature_from_face, models_ready
 from .models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent, SystemSetting
+
+logger = logging.getLogger(__name__)
 
 DEFAULTS = {'match_threshold':'0.363','liveness_threshold':'0.018','unknown_alert':'1','sound_alert':'1','auto_capture_unknown':'1','duplicate_window':'10','camera':'0','theme':'dark'}
 _liveness_state = {}
@@ -102,7 +104,9 @@ def recognize(request):
                 SystemEvent.objects.create(event_type='liveness' if (best is not None and score>=threshold and not live_ok) else 'unknown',message=reason,severity=ev.severity)
                 results.append({'recognized':False,'message':reason,'score':round(max(0,float(score)),3),'liveness':live_ok,'bbox':face['bbox'],'event_id':ev.id})
         return JsonResponse({'status':'success','recognized':any(x['recognized'] for x in results),'face_count':len(results),'results':results,'threshold':threshold,'fps_hint':0})
-    except Exception as exc: return JsonResponse({'status':'error','message':str(exc)},status=500)
+    except Exception as exc:
+        logger.exception('Recognition request failed (content_type=%s, body_bytes=%s)', request.content_type, len(request.body))
+        return JsonResponse({'status':'error','message':str(exc)},status=500)
 
 
 @require_GET
@@ -117,17 +121,30 @@ def health(request):
     except Exception:
         database_ok = False
     model_files_ready = False
+    inference_ready = False
+    inference_error = None
     try:
         model_files_ready = bool(models_ready())
-    except Exception:
-        model_files_ready = False
-    endpoint_available = True  # This view itself is running; inference readiness is separate.
+        if model_files_ready:
+            # Actually instantiate both ONNX networks and run the detector on a
+            # harmless in-memory frame. This does not write presence/unknown events.
+            from .face_engine import get_models, detect_faces
+            get_models()
+            detect_faces(np.zeros((120, 160, 3), dtype=np.uint8))
+            inference_ready = True
+    except Exception as exc:
+        logger.exception('Recognition health probe failed')
+        inference_error = str(exc)
+    endpoint_available = True
+    ready = database_ok and model_files_ready and inference_ready
     return JsonResponse({
-        'status': 'ok' if database_ok and model_files_ready else 'degraded',
+        'status': 'ok' if ready else 'degraded',
         'database': database_ok,
         'models_ready': model_files_ready,
+        'inference_ready': inference_ready,
+        'inference_error': inference_error,
         'recognition_endpoint': endpoint_available,
-        'ready': database_ok and model_files_ready,
+        'ready': ready,
     }, status=200 if database_ok else 503)
 
 @require_GET
