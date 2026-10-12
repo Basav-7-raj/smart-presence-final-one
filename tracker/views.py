@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import ensure_csrf_cookie
 from .face_engine import detect_faces, extract_best_feature, compare_features, feature_from_json, feature_templates_from_json, extract_feature_from_face, models_ready
-from .models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent, SystemSetting
+from .models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent, SystemSetting, LocationSite
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,11 @@ _liveness_state = {}
 
 def setting(key): return SystemSetting.objects.filter(key=key).values_list('value', flat=True).first() or DEFAULTS.get(key,'')
 def set_setting(key, value): SystemSetting.objects.update_or_create(key=key, defaults={'value':str(value)})
+def _active_site():
+    site_id = setting('active_site_id')
+    if not site_id:
+        return None
+    return LocationSite.objects.filter(pk=site_id, active=True).first()
 def bootstrap_settings():
     for k,v in DEFAULTS.items(): SystemSetting.objects.get_or_create(key=k, defaults={'value':v})
 
@@ -126,7 +131,7 @@ def recognize(request):
     try:
         frame=cv2.imdecode(np.frombuffer(request.body,np.uint8),cv2.IMREAD_COLOR)
         if frame is None: return JsonResponse({'status':'error','message':'Invalid frame.'},status=400)
-        faces=detect_faces(frame); people=list(PersonProfile.objects.filter(active=True)); client=_client_key(request); results=[]; threshold=float(setting('match_threshold') or .363); snapshot_enabled=setting('auto_capture_unknown')=='1'
+        faces=detect_faces(frame); people=list(PersonProfile.objects.filter(active=True)); client=_client_key(request); results=[]; threshold=float(setting('match_threshold') or .363); snapshot_enabled=setting('auto_capture_unknown')=='1'; site=_active_site()
         for face in faces:
             raw=np.zeros((15,),dtype=np.float32); raw[:4]=face['bbox']; raw[4:14]=np.asarray(face['landmarks']).reshape(-1); raw[14]=face['score']; feature=extract_feature_from_face(frame,raw)
             best=None; score=-1
@@ -149,20 +154,108 @@ def recognize(request):
             if verified:
                 window=int(setting('duplicate_window') or 10); since=timezone.now()-timedelta(minutes=window)
                 if not PresenceRecord.objects.filter(person=best,timestamp__gte=since).exists():
-                    PresenceRecord.objects.create(person=best,confidence=float(score),liveness_passed=True)
-                    SystemEvent.objects.create(event_type='verified',message=f'{best.name} verified',severity='INFO',person=best)
+                    PresenceRecord.objects.create(person=best,confidence=float(score),liveness_passed=True,site=site)
+                    SystemEvent.objects.create(event_type='verified',message=f'{best.name} verified',severity='INFO',person=best,site=site)
                 results.append({'recognized':True,'name':best.name,'student_id':best.student_id,'score':round(float(score),3),'liveness':True,'bbox':face['bbox']})
             else:
                 reason='Liveness verification required.' if best is not None and score>=threshold else 'Unknown person.'
                 snap=_save_snapshot(frame) if snapshot_enabled else ''
-                ev=UnknownEvent.objects.create(best_score=max(0,float(score)),liveness_passed=live_ok, snapshot=snap or None, severity='HIGH' if live_ok else 'MEDIUM', message=reason)
-                SystemEvent.objects.create(event_type='liveness' if (best is not None and score>=threshold and not live_ok) else 'unknown',message=reason,severity=ev.severity)
+                ev=UnknownEvent.objects.create(best_score=max(0,float(score)),liveness_passed=live_ok, snapshot=snap or None, severity='HIGH' if live_ok else 'MEDIUM', message=reason, site=site)
+                SystemEvent.objects.create(event_type='liveness' if (best is not None and score>=threshold and not live_ok) else 'unknown',message=reason,severity=ev.severity,site=site)
                 results.append({'recognized':False,'message':reason,'score':round(max(0,float(score)),3),'liveness':live_ok,'bbox':face['bbox'],'event_id':ev.id})
         return JsonResponse({'status':'success','recognized':any(x['recognized'] for x in results),'face_count':len(results),'results':results,'threshold':threshold,'fps_hint':0})
     except Exception as exc:
         logger.exception('Recognition request failed (content_type=%s, body_bytes=%s)', request.content_type, len(request.body))
         return JsonResponse({'status':'error','message':str(exc)},status=500)
 
+
+
+@login_required
+def locations_page(request):
+    sites = LocationSite.objects.all()
+    active_site = _active_site()
+    return render(request, 'tracker/locations.html', {'sites': sites, 'active_site': active_site})
+
+
+@login_required
+@require_GET
+def locations_data(request):
+    sites = LocationSite.objects.all()
+    active_site = _active_site()
+    site_rows = [{
+        'id': s.id, 'name': s.name, 'address': s.address,
+        'latitude': float(s.latitude) if s.latitude is not None else None,
+        'longitude': float(s.longitude) if s.longitude is not None else None,
+        'active': s.active,
+        'selected': bool(active_site and active_site.id == s.id),
+    } for s in sites]
+    presence = PresenceRecord.objects.select_related('person', 'site').order_by('-timestamp')[:100]
+    unknowns = UnknownEvent.objects.select_related('site').order_by('-timestamp')[:100]
+    return JsonResponse({
+        'sites': site_rows,
+        'presence': [{
+            'name': r.person.name, 'student_id': r.person.student_id,
+            'timestamp': r.timestamp.isoformat(), 'site': r.site.name if r.site else 'Unassigned',
+            'site_id': r.site_id, 'latitude': float(r.site.latitude) if r.site and r.site.latitude is not None else None,
+            'longitude': float(r.site.longitude) if r.site and r.site.longitude is not None else None,
+        } for r in presence],
+        'unknowns': [{
+            'timestamp': e.timestamp.isoformat(), 'message': e.message,
+            'severity': e.severity, 'snapshot': e.snapshot.url if e.snapshot else None,
+            'site': e.site.name if e.site else 'Unassigned', 'site_id': e.site_id,
+            'latitude': float(e.site.latitude) if e.site and e.site.latitude is not None else None,
+            'longitude': float(e.site.longitude) if e.site and e.site.longitude is not None else None,
+        } for e in unknowns],
+        'active_site_id': int(setting('active_site_id')) if setting('active_site_id').isdigit() else None,
+    })
+
+
+@login_required
+@require_POST
+def save_location_site(request):
+    name = request.POST.get('name', '').strip()
+    address = request.POST.get('address', '').strip()
+    lat_text = request.POST.get('latitude', '').strip()
+    lon_text = request.POST.get('longitude', '').strip()
+    if not name:
+        return JsonResponse({'status': 'error', 'message': 'Site name is required.'}, status=400)
+    if bool(lat_text) != bool(lon_text):
+        return JsonResponse({'status': 'error', 'message': 'Enter both latitude and longitude, or leave both blank.'}, status=400)
+    try:
+        latitude = float(lat_text) if lat_text else None
+        longitude = float(lon_text) if lon_text else None
+        if latitude is not None and not (-90 <= latitude <= 90):
+            raise ValueError('Latitude must be between -90 and 90.')
+        if longitude is not None and not (-180 <= longitude <= 180):
+            raise ValueError('Longitude must be between -180 and 180.')
+        site, created = LocationSite.objects.update_or_create(
+            name=name,
+            defaults={'address': address, 'latitude': latitude, 'longitude': longitude, 'active': True},
+        )
+        if request.POST.get('select_site') == '1':
+            set_setting('active_site_id', site.id)
+        return JsonResponse({'status': 'success', 'message': f'Site "{site.name}" saved.', 'site_id': site.id})
+    except (ValueError, TypeError) as exc:
+        return JsonResponse({'status': 'error', 'message': str(exc)}, status=400)
+
+
+@login_required
+@require_POST
+def select_location_site(request, site_id):
+    site = get_object_or_404(LocationSite, pk=site_id, active=True)
+    set_setting('active_site_id', site.id)
+    return JsonResponse({'status': 'success', 'message': f'New recognition events will be tagged to {site.name}.', 'site_id': site.id})
+
+
+@login_required
+@require_POST
+def delete_location_site(request, site_id):
+    site = get_object_or_404(LocationSite, pk=site_id)
+    if str(setting('active_site_id')) == str(site.id):
+        set_setting('active_site_id', '')
+    name = site.name
+    site.delete()  # Historical events are retained; SET_NULL removes only their site association.
+    return JsonResponse({'status': 'success', 'message': f'Site {name} deleted. Historical events remain.'})
 
 @require_GET
 def health(request):
