@@ -1,75 +1,65 @@
 {% extends 'tracker/base.html' %}
+{% load static %}
 {% block title %}Live Security Monitor{% endblock %}
 {% block content %}
 <div class="grid g4">
-<div class="card"><span class="muted">REGISTERED</span><div class="stat blue" id="registered">{{people_count}}</div></div>
-<div class="card"><span class="muted">PRESENT NOW</span><div class="stat green" id="present">{{present_count}}</div></div>
-<div class="card"><span class="muted">UNKNOWN EVENTS</span><div class="stat red" id="unknown">{{unknown_count}}</div></div>
-<div class="card"><span class="muted">RECOGNITION SERVICE</span><div class="stat amber" id="serviceStatus">CHECKING</div></div>
+  <div class="card"><span class="muted">REGISTERED</span><div class="stat blue" id="registered">{{people_count}}</div></div>
+  <div class="card"><span class="muted">PRESENT NOW</span><div class="stat green" id="present">{{present_count}}</div></div>
+  <div class="card"><span class="muted">UNKNOWN EVENTS</span><div class="stat red" id="unknown">{{unknown_count}}</div></div>
+  <div class="card"><span class="muted">RECOGNITION SERVICE</span><div class="stat amber" id="serviceStatus">CHECKING</div></div>
 </div>
 <div class="monitor" style="margin-top:16px">
-<section class="card camera-card">
-<div class="camera-wrap" id="cameraWrap">
-<video id="video" muted playsinline></video>
-<canvas id="canvas" hidden></canvas>
-<div class="camera-placeholder" id="placeholder">Camera is stopped.<br><small>Click Start Camera to request access.</small></div>
-<div class="camera-badge"><b id="cameraLiveLabel">● IDLE</b> &nbsp; MULTI-FACE ENGINE</div>
-<div id="boxes"></div>
-</div>
-<div style="padding:14px;display:flex;justify-content:space-between;align-items:center;gap:12px">
-<span class="muted" id="cameraStatus" role="status" aria-live="polite">Camera · Idle · No GPS collected</span>
-<button class="btn secondary" id="cameraBtn" type="button">Start Camera</button>
-</div>
-<div id="diagnostics" class="muted" role="status" aria-live="polite" style="padding:0 14px 14px;display:none"></div>
-</section>
-<section class="card">
-<div style="display:flex;justify-content:space-between"><b>LIVE EVENTS</b><span class="pill" id="fps">IDLE</span></div>
-<div class="event-list" id="events"><div class="empty">Start the camera to begin monitoring.</div></div>
-</section>
+  <section class="card camera-card">
+    <div class="camera-wrap" id="cameraWrap">
+      <video id="video" muted playsinline></video>
+      <canvas id="canvas" hidden></canvas>
+      <div class="camera-placeholder" id="placeholder">Camera is stopped.<br><small>Click Start Camera to request access.</small></div>
+      <div class="camera-badge"><b id="cameraLiveLabel">● IDLE</b> &nbsp; MULTI-FACE ENGINE</div>
+      <div id="boxes"></div>
+    </div>
+    <div style="padding:14px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <span class="muted" id="cameraStatus" role="status" aria-live="polite">Camera · Idle · No GPS collected</span>
+      <button class="btn secondary" id="cameraBtn" type="button">Start Camera</button>
+    </div>
+    <div id="diagnostics" class="muted" role="status" aria-live="polite" style="padding:0 14px 14px;display:none"></div>
+  </section>
+  <section class="card">
+    <div style="display:flex;justify-content:space-between"><b>LIVE EVENTS</b><span class="pill" id="fps">IDLE</span></div>
+    <div class="event-list" id="events"><div class="empty">Start the camera to begin monitoring.</div></div>
+  </section>
 </div>
 <div class="grid g3" style="margin-top:16px">
-<div class="card"><b>ENGINE STATUS</b>
-<div class="kv"><span>Camera</span><span id="engineCamera" class="amber">IDLE</span></div>
-<div class="kv"><span>Recognition API</span><span id="engineRecognition" class="amber">UNKNOWN</span></div>
-<div class="kv"><span>Face models</span><span id="engineModels" class="amber">NOT CHECKED</span></div>
-<div class="kv"><span>Database query</span><span id="engineDatabase" class="amber">NOT CHECKED</span></div>
-</div>
-<div class="card"><b>SECURITY MODE</b><p class="muted">Unknown identities create an evidence event and can capture a snapshot when enabled.</p><a class="btn" href="/evidence/">Open evidence</a></div>
-<div class="card"><b>PRIVACY CENTER</b><p class="muted">No GPS coordinates, continuous location history, or raw live video are stored by this application.</p><a class="btn secondary" href="/privacy/">View privacy</a></div>
+  <div class="card"><b>ENGINE STATUS</b>
+    <div class="kv"><span>Camera</span><span id="engineCamera" class="amber">IDLE</span></div>
+    <div class="kv"><span>Recognition API</span><span id="engineRecognition" class="amber">UNKNOWN</span></div>
+    <div class="kv"><span>Face model files</span><span id="engineModels" class="amber">NOT CHECKED</span></div>
+    <div class="kv"><span>Database query</span><span id="engineDatabase" class="amber">NOT CHECKED</span></div>
+  </div>
+  <div class="card"><b>SECURITY MODE</b><p class="muted">Unknown identities create an evidence event and can capture a snapshot when enabled.</p><a class="btn" href="/evidence/">Open evidence</a></div>
+  <div class="card"><b>PRIVACY CENTER</b><p class="muted">No GPS coordinates, continuous location history, or raw live video are stored by this application.</p><a class="btn secondary" href="/privacy/">View privacy</a></div>
 </div>
 <div id="alert" class="alert"><div class="alert-box"><div style="font-size:70px">🚨</div><h2>UNKNOWN PERSON DETECTED</h2><p>Identity is not registered. Security event created.</p><button class="btn" type="button" onclick="dismissAlert()">ACKNOWLEDGE</button></div></div>
 {% endblock %}
 {% block scripts %}
+<script src="{% static 'tracker/camera_controller.js' %}"></script>
 <script>
 (function () {
   'use strict';
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
-  const ctx = canvas ? canvas.getContext('2d') : null;
   const boxes = document.getElementById('boxes');
-  const eventsEl = document.getElementById('events');
   const cameraBtn = document.getElementById('cameraBtn');
   const placeholder = document.getElementById('placeholder');
   const cameraStatus = document.getElementById('cameraStatus');
   const cameraLiveLabel = document.getElementById('cameraLiveLabel');
   const diagnostics = document.getElementById('diagnostics');
   const fps = document.getElementById('fps');
-  const states = {
-    IDLE: 'IDLE', STARTING: 'STARTING', RUNNING: 'RUNNING',
-    STOPPING: 'STOPPING', ERROR: 'ERROR'
-  };
-  let state = states.IDLE;
-  let stream = null;
-  let scanTimer = null;
+  let controller = null;
   let statsTimer = null;
-  let requestPending = false;
-  let generation = 0;
-  let client = 'client-' + Math.random().toString(36).slice(2);
+  let healthTimer = null;
   let lastAlert = 0;
-  let disposed = false;
 
   function logDiagnostic(code, detail) {
-    // Keep diagnostics useful without logging frames, face features, or personal data.
     const message = '[SmartPresence][' + code + '] ' + String(detail || '');
     console.warn(message);
     if (diagnostics) {
@@ -79,27 +69,10 @@
   }
 
   function setIndicator(id, label, tone) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.textContent = label;
-    el.className = tone || 'muted';
-  }
-
-  function setState(next, message) {
-    state = next;
-    const active = next === states.RUNNING;
-    if (cameraBtn) {
-      cameraBtn.textContent = active ? 'Stop Camera' : (next === states.STARTING ? 'Starting…' : 'Start Camera');
-      cameraBtn.disabled = next === states.STARTING || next === states.STOPPING;
-    }
-    if (cameraStatus) cameraStatus.textContent = message || ('Camera · ' + next);
-    if (cameraLiveLabel) {
-      cameraLiveLabel.textContent = '● ' + next;
-      cameraLiveLabel.style.color = next === states.RUNNING ? 'var(--green)' :
-        (next === states.ERROR ? 'var(--red)' : 'var(--amber)');
-    }
-    setIndicator('engineCamera', next, active ? 'green' : (next === states.ERROR ? 'red' : 'amber'));
-    if (fps && !active && next !== states.STARTING) fps.textContent = next;
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.textContent = label;
+    element.className = tone || 'muted';
   }
 
   function getCookie(name) {
@@ -110,24 +83,6 @@
   function getCsrfToken() {
     return getCookie('csrftoken') ||
       (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '';
-  }
-
-  function explainError(error) {
-    const name = error && error.name ? error.name : '';
-    if (name === 'NotAllowedError' || name === 'SecurityError') {
-      return 'Camera permission was denied. Allow camera access in the browser site settings.';
-    }
-    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-      return 'No camera was found. Connect or enable a webcam, then retry.';
-    }
-    if (name === 'NotReadableError' || name === 'TrackStartError') {
-      return 'The camera is busy or unavailable. Close apps using it and retry.';
-    }
-    if (name === 'OverconstrainedError') {
-      return 'The camera cannot satisfy the requested video settings. Try another device.';
-    }
-    if (name === 'AbortError') return 'Camera startup was interrupted. Try again.';
-    return (name ? name + ': ' : '') + ((error && error.message) || 'Unexpected camera error.');
   }
 
   function beep() {
@@ -162,14 +117,15 @@
     if (alert) alert.classList.remove('show');
   };
 
-  function clearVisuals() {
-    if (boxes) boxes.replaceChildren();
-    if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
-
   function draw(results) {
     if (!boxes || !video.videoWidth || !video.videoHeight) return;
     boxes.replaceChildren();
+    const wrap = document.getElementById('cameraWrap');
+    const boxWidth = wrap && wrap.clientWidth ? wrap.clientWidth : video.videoWidth;
+    const boxHeight = wrap && wrap.clientHeight ? wrap.clientHeight : video.videoHeight;
+    const scale = Math.max(boxWidth / video.videoWidth, boxHeight / video.videoHeight);
+    const cropX = (boxWidth - video.videoWidth * scale) / 2;
+    const cropY = (boxHeight - video.videoHeight * scale) / 2;
     (results || []).forEach(function (result) {
       const bbox = result.bbox || [0, 0, 0, 0];
       const x = Number(bbox[0]) || 0;
@@ -178,11 +134,11 @@
       const height = Number(bbox[3]) || 0;
       const element = document.createElement('div');
       element.className = 'overlay-box ' + (result.recognized ? '' : 'unknown');
-      // CSS mirrors only the video. Mirror the overlay's horizontal coordinate too.
-      element.style.left = ((video.videoWidth - (x + width)) / video.videoWidth * 100) + '%';
-      element.style.top = (y / video.videoHeight * 100) + '%';
-      element.style.width = (width / video.videoWidth * 100) + '%';
-      element.style.height = (height / video.videoHeight * 100) + '%';
+      // Apply the video's object-fit:cover crop and horizontal mirror to face coordinates.
+      element.style.left = ((boxWidth - ((x + width) * scale + cropX)) / boxWidth * 100) + '%';
+      element.style.top = ((y * scale + cropY) / boxHeight * 100) + '%';
+      element.style.width = (width * scale / boxWidth * 100) + '%';
+      element.style.height = (height * scale / boxHeight * 100) + '%';
       const title = document.createElement('b');
       title.textContent = result.recognized ? (result.name || 'VERIFIED') : 'UNKNOWN';
       const details = document.createElement('small');
@@ -197,6 +153,7 @@
   }
 
   function addEvents(results) {
+    const eventsEl = document.getElementById('events');
     if (!eventsEl) return;
     const now = new Date().toLocaleTimeString();
     (results || []).forEach(function (result) {
@@ -220,20 +177,21 @@
 
   async function readJsonResponse(response, endpoint) {
     let body;
-    try {
-      body = await response.json();
-    } catch (error) {
-      throw new Error(endpoint + ' returned an invalid response (HTTP ' + response.status + ').');
+    try { body = await response.json(); }
+    catch (error) {
+      if (response.status === 403) throw new Error(endpoint + ' forbidden (403); check CSRF validation and session.');
+      if (response.status === 404) throw new Error(endpoint + ' not found (404).');
+      if (response.status >= 500) throw new Error(endpoint + ' server error (' + response.status + ').');
+      throw new Error(endpoint + ' returned invalid JSON (HTTP ' + response.status + ').');
     }
     if (!response.ok) {
       let message = body && body.message;
-      if (response.status === 403) message = message || 'Request forbidden (403). Check your session and CSRF token.';
-      else if (response.status === 404) message = message || 'Endpoint not found (404). Check the server route.';
-      else if (response.status >= 500) message = message || 'Server error (' + response.status + '). Check server diagnostics.';
+      if (response.status === 403) message = message || 'Forbidden (403). Check the session and CSRF configuration.';
+      else if (response.status === 404) message = message || 'Endpoint not found (404).';
+      else if (response.status >= 500) message = message || 'Server error (' + response.status + ').';
       else message = message || 'Request failed (HTTP ' + response.status + ').';
       throw new Error(message);
     }
-    if (!body || typeof body !== 'object') throw new Error(endpoint + ' returned an unexpected response.');
     return body;
   }
 
@@ -247,6 +205,7 @@
       if (unknown) unknown.textContent = (body.events || []).filter(function (event) {
         return event.type === 'unknown';
       }).length;
+      setIndicator('engineDatabase', 'AVAILABLE', 'green');
     } catch (error) {
       setIndicator('engineDatabase', 'UNAVAILABLE', 'red');
       logDiagnostic('EVENTS_API', error.message);
@@ -257,13 +216,13 @@
     try {
       const response = await fetch('/health/', { credentials: 'same-origin', cache: 'no-store' });
       const body = await readJsonResponse(response, '/health/');
-      setIndicator('engineRecognition', body.recognition_endpoint ? 'AVAILABLE' : 'ERROR',
+      setIndicator('engineRecognition', body.recognition_endpoint ? 'ROUTE AVAILABLE' : 'ERROR',
         body.recognition_endpoint ? 'green' : 'red');
       setIndicator('engineModels', body.models_ready ? 'FILES PRESENT' : 'MISSING',
         body.models_ready ? 'green' : 'red');
       setIndicator('engineDatabase', body.database ? 'AVAILABLE' : 'ERROR',
         body.database ? 'green' : 'red');
-      setIndicator('serviceStatus', body.ready ? 'READY' : 'DEGRADED',
+      setIndicator('serviceStatus', body.ready ? 'BASE CHECKS OK' : 'DEGRADED',
         body.ready ? 'green' : 'amber');
       if (!body.models_ready) logDiagnostic('MODEL_FILES', 'One or more ONNX model files are missing; run python download_models.py.');
     } catch (error) {
@@ -273,225 +232,83 @@
     }
   }
 
-  function clearScanTimer() {
-    if (scanTimer !== null) {
-      window.clearTimeout(scanTimer);
-      scanTimer = null;
-    }
-  }
-
-  function stopTracks() {
-    if (stream) {
-      stream.getTracks().forEach(function (track) {
-        try { track.stop(); } catch (error) { logDiagnostic('TRACK_STOP', error && error.name); }
-      });
-      stream = null;
-    }
-    if (video) {
-      video.pause();
-      video.srcObject = null;
-    }
-  }
-
-  function failCamera(error, version) {
-    if (version !== generation || disposed) return;
-    clearScanTimer();
-    stopTracks();
-    requestPending = false;
-    clearVisuals();
+  function updateCameraState(state, message) {
+    const running = state === 'RUNNING';
+    cameraBtn.textContent = state === 'STARTING' ? 'Cancel startup' :
+      (running ? 'Stop Camera' : 'Start Camera');
+    cameraBtn.disabled = state === 'STOPPING';
+    cameraStatus.textContent = message;
+    cameraLiveLabel.textContent = '● ' + state;
+    cameraLiveLabel.style.color = running ? 'var(--green)' :
+      (state === 'ERROR' ? 'var(--red)' : 'var(--amber)');
+    setIndicator('engineCamera', state, running ? 'green' :
+      (state === 'ERROR' ? 'red' : 'amber'));
     if (placeholder) {
-      placeholder.style.display = '';
-      placeholder.textContent = explainError(error);
+      placeholder.style.display = running ? 'none' : '';
+      if (state === 'IDLE') placeholder.textContent = 'Camera is stopped. Click Start Camera to begin.';
+      if (state === 'STARTING') placeholder.textContent = 'Requesting camera permission…';
+      if (state === 'ERROR') placeholder.textContent = message;
     }
-    setState(states.ERROR, 'Camera error · ' + explainError(error));
-    setIndicator('serviceStatus', 'CHECK SERVER', 'amber');
-    logDiagnostic('CAMERA', explainError(error));
+    if (!running && fps) fps.textContent = state;
+    if (!running && boxes) boxes.replaceChildren();
   }
 
-  async function scan(version) {
-    if (version !== generation || state !== states.RUNNING || disposed) return;
-    if (requestPending) return; // The next scan is scheduled only after this one completes.
-    if (!canvas || !ctx) {
-      failCamera(new Error('Canvas is unavailable in this browser.'), version);
+  function onRecognitionError(message) {
+    setIndicator('engineRecognition', 'ERROR', 'red');
+    setIndicator('serviceStatus', 'RECOGNITION ERROR', 'red');
+    if (fps) fps.textContent = 'RECOGNITION ERROR';
+    cameraStatus.textContent = 'Camera running · ' + message;
+  }
+
+  function init() {
+    if (!window.SmartPresenceCameraController) {
+      logDiagnostic('CAMERA_CONTROLLER', 'Camera controller script failed to load.');
+      setIndicator('serviceStatus', 'CAMERA CODE UNAVAILABLE', 'red');
+      updateCameraState('ERROR', 'Camera controller failed to load. Refresh the page.');
       return;
     }
-    if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
-      scanTimer = window.setTimeout(function () { scan(version); }, 300);
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      logDiagnostic('CAMERA_API', 'navigator.mediaDevices.getUserMedia is unavailable.');
+      setIndicator('serviceStatus', 'CAMERA UNAVAILABLE', 'red');
+      updateCameraState('ERROR', 'Camera API is unavailable in this browser or page context. Use HTTPS or localhost.');
       return;
     }
-    requestPending = true;
-    try {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise(function (resolve) {
-        canvas.toBlob(resolve, 'image/jpeg', 0.78);
-      });
-      if (version !== generation || state !== states.RUNNING || disposed) return;
-      if (!blob) throw new Error('Browser could not encode a camera frame.');
-      const token = getCsrfToken();
-      if (!token) throw new Error('CSRF token is unavailable. Reload the page and sign in again if required.');
-      const response = await fetch('/recognize/', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'image/jpeg',
-          'X-Client-ID': client,
-          'X-CSRFToken': token
-        },
-        body: blob
-      });
-      // A stop/restart invalidates this generation: ignore late replies.
-      if (version !== generation || state !== states.RUNNING || disposed) return;
-      const body = await readJsonResponse(response, '/recognize/');
-      if (body.status !== 'success' || !Array.isArray(body.results)) {
-        throw new Error(body.message || 'Recognition returned an invalid payload.');
-      }
-      draw(body.results);
-      if (body.results.some(function (result) { return !result.recognized; })) alertUnknown();
-      addEvents(body.results);
-      if (fps) fps.textContent = (body.face_count || 0) + ' FACE(S) · LIVE';
-      setIndicator('engineRecognition', 'RESPONDING', 'green');
-      await refreshStats();
-    } catch (error) {
-      if (version === generation && state === states.RUNNING && !disposed) {
-        const message = error && error.message ? error.message : 'Unknown request error.';
-        logDiagnostic(message.indexOf('CSRF') >= 0 || message.indexOf('(403)') >= 0 ? 'CSRF_OR_FORBIDDEN' : 'RECOGNITION', message);
-        setIndicator('engineRecognition', 'ERROR', 'red');
-        if (fps) fps.textContent = 'RECOGNITION ERROR';
-        if (cameraStatus) cameraStatus.textContent = 'Camera running · ' + message;
-      }
-    } finally {
-      requestPending = false;
-      if (version === generation && state === states.RUNNING && !disposed) {
-        clearScanTimer();
-        scanTimer = window.setTimeout(function () { scan(version); }, 850);
-      }
-    }
+    controller = new window.SmartPresenceCameraController({
+      mediaDevices: navigator.mediaDevices,
+      video: video,
+      canvas: canvas,
+      fetch: window.fetch.bind(window),
+      getCsrfToken: getCsrfToken,
+      isSecureContext: function () { return window.isSecureContext; },
+      onState: updateCameraState,
+      onResults: function (body) {
+        draw(body.results);
+        if (body.results.some(function (result) { return !result.recognized; })) alertUnknown();
+        addEvents(body.results);
+        if (fps) fps.textContent = (body.face_count || 0) + ' FACE(S) · LIVE';
+        setIndicator('engineRecognition', 'RESPONDING', 'green');
+        refreshStats();
+      },
+      onRecognitionError: onRecognitionError,
+      onDiagnostic: logDiagnostic
+    });
+    cameraBtn.addEventListener('click', function () {
+      if (!controller) return;
+      if (controller.state === 'RUNNING' || controller.state === 'STARTING') controller.stop();
+      else if (controller.state !== 'STOPPING') void controller.start();
+    });
+    refreshStats();
+    checkHealth();
+    statsTimer = window.setInterval(refreshStats, 5000);
+    healthTimer = window.setInterval(checkHealth, 30000);
+    window.addEventListener('pagehide', function () {
+      if (statsTimer !== null) window.clearInterval(statsTimer);
+      if (healthTimer !== null) window.clearInterval(healthTimer);
+      if (controller) controller.dispose();
+    }, { once: true });
   }
 
-  function onTrackEnded(version) {
-    if (version !== generation || state !== states.RUNNING) return;
-    failCamera(new Error('Camera disconnected or its video track ended. Reconnect the camera and restart.'), version);
-  }
-
-  async function startCamera() {
-    if (disposed || state === states.STARTING || state === states.STOPPING || state === states.RUNNING) return;
-    generation += 1;
-    const version = generation;
-    clearScanTimer();
-    requestPending = false;
-    clearVisuals();
-    setState(states.STARTING, 'Requesting camera access…');
-    if (placeholder) {
-      placeholder.style.display = '';
-      placeholder.textContent = 'Requesting camera permission…';
-    }
-    try {
-      if (!window.isSecureContext) throw new Error('Camera access requires HTTPS or localhost. Open the secure forwarded URL.');
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Camera API is unavailable in this browser or page context.');
-      }
-      const acquired = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false
-      });
-      // If the user stopped while permission was pending, immediately release this stream.
-      if (version !== generation || state !== states.STARTING || disposed) {
-        acquired.getTracks().forEach(function (track) { track.stop(); });
-        return;
-      }
-      stream = acquired;
-      stream.getVideoTracks().forEach(function (track) {
-        track.addEventListener('ended', function () { onTrackEnded(version); }, { once: true });
-      });
-      video.srcObject = stream;
-      await video.play();
-      if (version !== generation || state !== states.STARTING || disposed) {
-        stopTracks();
-        return;
-      }
-      if (!video.videoWidth || !video.videoHeight) {
-        throw new Error('Camera opened but video frames are unavailable.');
-      }
-      if (placeholder) placeholder.style.display = 'none';
-      setState(states.RUNNING, 'Camera running · recognition requests start now.');
-      setIndicator('engineRecognition', 'WAITING FOR FIRST RESPONSE', 'amber');
-      scan(version);
-    } catch (error) {
-      failCamera(error, version);
-    }
-  }
-
-  function stopCamera() {
-    if (state === states.IDLE || state === states.STOPPING) return;
-    generation += 1; // Invalidates all pending permission, encoding, and fetch callbacks.
-    clearScanTimer();
-    setState(states.STOPPING, 'Stopping camera…');
-    stopTracks();
-    requestPending = false;
-    clearVisuals();
-    if (placeholder) {
-      placeholder.style.display = '';
-      placeholder.textContent = 'Camera stopped. Click Start Camera to begin.';
-    }
-    setState(states.IDLE, 'Camera · Idle · Click Start Camera to begin.');
-    if (fps) fps.textContent = 'IDLE';
-  }
-
-  function onDeviceChange() {
-    if (state !== states.RUNNING || !stream) return;
-    const activeId = (stream.getVideoTracks()[0] || {}).getSettings;
-    const track = stream.getVideoTracks()[0];
-    if (track && track.readyState === 'ended') {
-      failCamera(new Error('Active camera disconnected. Choose a connected camera and restart.'), generation);
-    } else if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-      navigator.mediaDevices.enumerateDevices().then(function (devices) {
-        if (state !== states.RUNNING || !stream) return;
-        const tracks = stream.getVideoTracks();
-        const current = tracks[0] && tracks[0].getSettings ? tracks[0].getSettings().deviceId : null;
-        if (current && !devices.some(function (device) {
-          return device.kind === 'videoinput' && device.deviceId === current;
-        })) {
-          failCamera(new Error('The active camera is no longer available. Reconnect it and restart.'), generation);
-        }
-      }).catch(function (error) { logDiagnostic('DEVICE_CHANGE', error && error.name); });
-    }
-  }
-
-  function onVideoError() {
-    if (state === states.RUNNING || state === states.STARTING) {
-      failCamera(new Error('The browser video element reported a playback error.'), generation);
-    }
-  }
-
-  if (cameraBtn) cameraBtn.addEventListener('click', function () {
-    if (state === states.RUNNING) stopCamera();
-    else if (state !== states.STARTING && state !== states.STOPPING) startCamera();
-  });
-  if (video) video.addEventListener('error', onVideoError);
-  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
-    navigator.mediaDevices.addEventListener('devicechange', onDeviceChange);
-  }
-  window.addEventListener('error', function (event) {
-    logDiagnostic('JAVASCRIPT', (event && event.message) || 'Script error');
-  });
-  window.addEventListener('unhandledrejection', function (event) {
-    logDiagnostic('PROMISE', event && event.reason && event.reason.message ? event.reason.message : 'Unhandled promise rejection');
-  });
-  window.addEventListener('pagehide', function () {
-    disposed = true;
-    generation += 1;
-    clearScanTimer();
-    if (statsTimer !== null) window.clearInterval(statsTimer);
-    stopTracks();
-  }, { once: true });
-
-  setState(states.IDLE, 'Camera · Idle · Click Start Camera to begin.');
-  refreshStats();
-  checkHealth();
-  statsTimer = window.setInterval(refreshStats, 5000);
-  window.setInterval(checkHealth, 30000);
+  init();
 })();
 </script>
 {% endblock %}
