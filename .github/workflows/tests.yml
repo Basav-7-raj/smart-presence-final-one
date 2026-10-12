@@ -24,6 +24,9 @@ jobs:
       - name: Django tests
         run: python manage.py test
       - name: JavaScript syntax
-        run: node --check tracker/static/tracker/camera_controller.js
+        run: |
+          node --check tracker/static/tracker/camera_controller.js
+          python -c "import pathlib,re; p=pathlib.Path('tracker/templates/tracker/dashboard.html').read_text(); s=re.search(r'<script>([\\s\\S]*?)</script>', p); assert s, 'dashboard inline script not found'; pathlib.Path('/tmp/dashboard-inline.js').write_text(s.group(1))"
+          node --check /tmp/dashboard-inline.js
       - name: Camera lifecycle mock tests
         run: node --test tracker/static/tracker/camera_controller.test.cjs
