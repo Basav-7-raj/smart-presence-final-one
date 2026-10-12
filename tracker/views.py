@@ -12,7 +12,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import ensure_csrf_cookie
-from .face_engine import detect_faces, extract_best_feature, compare_features, feature_from_json, extract_feature_from_face, models_ready
+from .face_engine import detect_faces, extract_best_feature, compare_features, feature_from_json, feature_templates_from_json, extract_feature_from_face, models_ready
 from .models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent, SystemSetting
 
 logger = logging.getLogger(__name__)
@@ -54,17 +54,63 @@ def _context():
 @require_POST
 @login_required
 def register_face(request):
-    name=request.POST.get('name','').strip(); student_id=request.POST.get('student_id','').strip(); image=request.FILES.get('image')
-    if not name or not student_id or not image: return JsonResponse({'status':'error','message':'Name, Student ID and photo are required.'},status=400)
+    name = request.POST.get('name', '').strip()
+    student_id = request.POST.get('student_id', '').strip()
+    # Accept the new multi-file field and the old single-file field for compatibility.
+    images = request.FILES.getlist('images') or request.FILES.getlist('image')
+    if not name or not student_id or not images:
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Name, Student ID and at least one face photo are required.',
+        }, status=400)
+    if len(images) > 12:
+        return JsonResponse({'status': 'error', 'message': 'Choose at most 12 photos per registration.'}, status=400)
     try:
-        frame=cv2.imdecode(np.frombuffer(image.read(),np.uint8),cv2.IMREAD_COLOR)
-        if frame is None: raise ValueError('Invalid image file.')
-        feature,face=extract_best_feature(frame)
-        if feature is None: return JsonResponse({'status':'error','message':'No clear face found. Use a front-facing photo.'},status=400)
-        person,_=PersonProfile.objects.get_or_create(student_id=student_id); person.name=name; person.active=True; person.set_encoding(feature); person.save()
-        SystemEvent.objects.create(event_type='system',message=f'{name} registered',severity='INFO',person=person)
-        return JsonResponse({'status':'success','message':f'{name} registered successfully.'})
-    except Exception as exc: return JsonResponse({'status':'error','message':str(exc)},status=500)
+        features = []
+        rejected = []
+        for index, image in enumerate(images, start=1):
+            frame = cv2.imdecode(np.frombuffer(image.read(), np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                rejected.append(index)
+                continue
+            feature, face = extract_best_feature(frame)
+            if feature is None:
+                rejected.append(index)
+                continue
+            features.append(feature)
+        if not features:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'No usable face was found in the selected photos. Use clear, front-facing photos with one person visible.',
+                'rejected_photos': rejected,
+            }, status=400)
+        person, created = PersonProfile.objects.get_or_create(student_id=student_id)
+        person.name = name
+        person.active = True
+        # Store all embeddings in the existing JSON field; no database migration
+        # and no loss of compatibility with profiles containing a single vector.
+        person.encoding_json = json.dumps(features)
+        person.save()
+        SystemEvent.objects.create(
+            event_type='system',
+            message=f'{name} registered with {len(features)} face sample(s)',
+            severity='INFO',
+            person=person,
+        )
+        message = f'{name} registered with {len(features)} usable photo(s).'
+        if rejected:
+            message += f' {len(rejected)} photo(s) had no detectable face and were skipped.'
+        if len(features) < 3:
+            message += ' Tip: add 5–8 photos with slight head-angle and lighting variations for more reliable matching.'
+        return JsonResponse({
+            'status': 'success',
+            'message': message,
+            'samples_saved': len(features),
+            'samples_skipped': len(rejected),
+        })
+    except Exception as exc:
+        logger.exception('Person registration failed for student_id=%s', student_id)
+        return JsonResponse({'status': 'error', 'message': str(exc)}, status=500)
 
 @require_POST
 @login_required
@@ -86,9 +132,18 @@ def recognize(request):
             best=None; score=-1
             for person in people:
                 try:
-                    s=compare_features(feature,feature_from_json(person.encoding_json))
-                    if s>score: score=s; best=person
-                except Exception: pass
+                    # Match against every registered photo and keep that person's
+                    # strongest cosine similarity. Supports existing single-photo rows.
+                    templates = feature_templates_from_json(person.encoding_json)
+                    person_score = max(
+                        (compare_features(feature, template) for template in templates),
+                        default=-1,
+                    )
+                    if person_score > score:
+                        score = person_score
+                        best = person
+                except Exception:
+                    logger.exception('Could not compare face template for person_id=%s', person.pk)
             live_ok,live_msg=_liveness_check(client,face)
             verified=best is not None and score>=threshold and live_ok
             if verified:
