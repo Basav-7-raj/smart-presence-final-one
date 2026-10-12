@@ -58,6 +58,9 @@
   let statsTimer = null;
   let healthTimer = null;
   let lastAlert = 0;
+  // Health polling is not a recognition request; do not let it erase the last
+  // real POST result. A successful POST clears a prior request error.
+  let recognitionRequestState = 'UNKNOWN';
 
   function logDiagnostic(code, detail) {
     const message = '[SmartPresence][' + code + '] ' + String(detail || '');
@@ -216,15 +219,23 @@
     try {
       const response = await fetch('/health/', { credentials: 'same-origin', cache: 'no-store' });
       const body = await readJsonResponse(response, '/health/');
-      setIndicator('engineRecognition', body.recognition_endpoint ? 'ROUTE AVAILABLE' : 'ERROR',
-        body.recognition_endpoint ? 'green' : 'red');
-      setIndicator('engineModels', body.models_ready ? 'FILES PRESENT' : 'MISSING',
-        body.models_ready ? 'green' : 'red');
+      // Report file presence separately from actual ONNX runtime readiness.
+      setIndicator('engineModels',
+        !body.models_ready ? 'MISSING' : (body.inference_ready ? 'RUNTIME READY' : 'INFERENCE ERROR'),
+        body.inference_ready ? 'green' : 'red');
       setIndicator('engineDatabase', body.database ? 'AVAILABLE' : 'ERROR',
         body.database ? 'green' : 'red');
-      setIndicator('serviceStatus', body.ready ? 'BASE CHECKS OK' : 'DEGRADED',
-        body.ready ? 'green' : 'amber');
+      // The route existing is not evidence that a camera POST works. Only show
+      // route availability before the first actual recognition request.
+      if (recognitionRequestState === 'UNKNOWN') {
+        setIndicator('engineRecognition',
+          body.inference_ready ? 'READY — AWAITING FRAME' : 'ERROR',
+          body.inference_ready ? 'amber' : 'red');
+        setIndicator('serviceStatus', body.ready ? 'READY — AWAITING FRAME' : 'DEGRADED',
+          body.ready ? 'amber' : 'red');
+      }
       if (!body.models_ready) logDiagnostic('MODEL_FILES', 'One or more ONNX model files are missing; run python download_models.py.');
+      else if (!body.inference_ready) logDiagnostic('MODEL_INFERENCE', body.inference_error || 'ONNX model initialization or detector probe failed.');
     } catch (error) {
       setIndicator('engineRecognition', 'UNAVAILABLE', 'red');
       setIndicator('serviceStatus', 'UNAVAILABLE', 'red');
@@ -254,6 +265,7 @@
   }
 
   function onRecognitionError(message) {
+    recognitionRequestState = 'ERROR';
     setIndicator('engineRecognition', 'ERROR', 'red');
     setIndicator('serviceStatus', 'RECOGNITION ERROR', 'red');
     if (fps) fps.textContent = 'RECOGNITION ERROR';
@@ -282,6 +294,7 @@
       isSecureContext: function () { return window.isSecureContext; },
       onState: updateCameraState,
       onResults: function (body) {
+        recognitionRequestState = 'RESPONDING';
         draw(body.results);
         if (body.results.some(function (result) { return !result.recognized; })) alertUnknown();
         addEvents(body.results);
