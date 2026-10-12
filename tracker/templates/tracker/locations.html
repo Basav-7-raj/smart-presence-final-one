@@ -43,8 +43,8 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
 (function(){
   const csrf = document.querySelector('[name=csrfmiddlewaretoken]').value;
@@ -78,6 +78,11 @@
     const data = new FormData(form);
     try {
       const response = await fetch('/locations/save/', {method:'POST', headers:{'X-CSRFToken':csrf}, body:data, credentials:'same-origin'});
+      if (response.redirected && response.url.includes('/admin-login/')) {
+        msg.textContent = 'Your session has expired. Sign in again, then reopen Location Sites & Map.';
+        msg.className = 'red';
+        return;
+      }
       const result = await response.json();
       msg.textContent = result.message || 'Could not save site.';
       msg.className = result.status === 'success' ? 'green' : 'red';
@@ -96,7 +101,14 @@
   async function load() {
     try {
       const response = await fetch('/locations/data/', {credentials:'same-origin'});
-      if (!response.ok) throw new Error('HTTP ' + response.status + ' — sign in as admin if prompted.');
+      if (response.redirected && response.url.includes('/admin-login/')) {
+        document.getElementById('mapMessage').innerHTML = 'Sign in is required to view monitored sites. <a href="/admin-login/?next=/locations/">Sign in</a>';
+        document.getElementById('siteList').textContent = 'Please sign in to manage locations.';
+        document.getElementById('presenceList').textContent = 'Please sign in to view event records.';
+        document.getElementById('unknownList').textContent = 'Please sign in to view security alerts.';
+        return;
+      }
+      if (!response.ok) throw new Error('HTTP ' + response.status);
       const data = await response.json();
       document.getElementById('siteCount').textContent = data.sites.length;
       const active = data.sites.find(s => s.selected);
