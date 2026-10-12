@@ -115,6 +115,24 @@ class MultiPhotoRegistrationTests(TestCase):
 
 
 
+class LivenessRegressionTests(TestCase):
+    def tearDown(self):
+        views._liveness_state.clear()
+
+    def test_small_continuous_movement_accumulates_against_stable_baseline(self):
+        views._liveness_state.clear()
+        def face_with_y(y):
+            return {"landmarks": [[0, 0], [10, 0], [5, y], [2, 2], [8, 2]]}
+        with patch("tracker.views.setting", return_value="0.018"):
+            first_ok, _ = views._liveness_check("test-client", face_with_y(5.0))
+            small_ok, _ = views._liveness_check("test-client", face_with_y(5.05))
+            cumulative_ok, message = views._liveness_check("test-client", face_with_y(5.2))
+        self.assertFalse(first_ok)
+        self.assertFalse(small_ok)
+        self.assertTrue(cumulative_ok)
+        self.assertEqual(message, "Liveness verified")
+
+
 class LocationAwareSiteTests(TestCase):
     def setUp(self):
         from django.contrib.auth import get_user_model

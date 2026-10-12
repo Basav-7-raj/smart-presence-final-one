@@ -33,13 +33,40 @@ def bootstrap_settings():
 
 def _client_key(request): return request.headers.get('X-Client-ID','browser-default')
 def _liveness_check(client_id, face):
-    now=time.monotonic(); pts=np.asarray(face['landmarks'],dtype=np.float32); scale=max(float(np.linalg.norm(pts[0]-pts[1])),1.0)
-    geom=np.array([(pts[2,0]-pts[0,0])/scale,(pts[2,1]-(pts[0,1]+pts[1,1])/2)/scale,(pts[1,0]-pts[0,0])/scale],dtype=np.float32)
-    state=_liveness_state.get(client_id); cur={'t':now,'geom':geom}
-    if state is None or now-state['t']>4.0: _liveness_state[client_id]=cur; return False,'Move your head slightly for liveness verification.'
-    delta=float(np.linalg.norm(geom-state['geom'])); _liveness_state[client_id]=cur
-    ok=delta>=float(setting('liveness_threshold') or .018)
-    return ok, 'Liveness verified' if ok else 'Move your head slightly for liveness verification.'
+    """
+    Require measurable movement against a stable baseline, not just the previous
+    frame. Updating the baseline on every frame made slow, continuous movement
+    impossible to accumulate past the threshold.
+    """
+    now = time.monotonic()
+    pts = np.asarray(face['landmarks'], dtype=np.float32)
+    scale = max(float(np.linalg.norm(pts[0] - pts[1])), 1.0)
+    geom = np.array([
+        (pts[2, 0] - pts[0, 0]) / scale,
+        (pts[2, 1] - (pts[0, 1] + pts[1, 1]) / 2) / scale,
+        (pts[1, 0] - pts[0, 0]) / scale,
+    ], dtype=np.float32)
+
+    state = _liveness_state.get(client_id)
+    if state is None or now - state['baseline_time'] > 4.0:
+        _liveness_state[client_id] = {
+            'baseline_time': now,
+            'geom': geom,
+        }
+        return False, 'Move your head slightly and hold for liveness verification.'
+
+    delta = float(np.linalg.norm(geom - state['geom']))
+    if delta >= float(setting('liveness_threshold') or .018):
+        # Reset after a successful movement so the next verification cycle
+        # must show fresh movement rather than reusing the same frame change.
+        _liveness_state[client_id] = {
+            'baseline_time': now,
+            'geom': geom,
+        }
+        return True, 'Liveness verified'
+
+    # Deliberately keep the original baseline; do not overwrite it on every frame.
+    return False, 'Face matched; move your head slightly for liveness verification.'
 
 def _today(): return timezone.localdate()
 def _present_people():
@@ -158,11 +185,41 @@ def recognize(request):
                     SystemEvent.objects.create(event_type='verified',message=f'{best.name} verified',severity='INFO',person=best,site=site)
                 results.append({'recognized':True,'name':best.name,'student_id':best.student_id,'score':round(float(score),3),'liveness':True,'bbox':face['bbox']})
             else:
-                reason='Liveness verification required.' if best is not None and score>=threshold else 'Unknown person.'
-                snap=_save_snapshot(frame) if snapshot_enabled else ''
-                ev=UnknownEvent.objects.create(best_score=max(0,float(score)),liveness_passed=live_ok, snapshot=snap or None, severity='HIGH' if live_ok else 'MEDIUM', message=reason, site=site)
-                SystemEvent.objects.create(event_type='liveness' if (best is not None and score>=threshold and not live_ok) else 'unknown',message=reason,severity=ev.severity,site=site)
-                results.append({'recognized':False,'message':reason,'score':round(max(0,float(score)),3),'liveness':live_ok,'bbox':face['bbox'],'event_id':ev.id})
+                matched_candidate = best is not None and score >= threshold
+                reason = (
+                    'Face matched; move your head slightly for liveness verification.'
+                    if matched_candidate and not live_ok else 'Unknown person.'
+                )
+                # A strong face match that is still awaiting liveness is not an
+                # unknown-person event. Record a liveness event instead.
+                if matched_candidate and not live_ok:
+                    SystemEvent.objects.create(
+                        event_type='liveness', message=reason, severity='MEDIUM',
+                        person=best, site=site,
+                    )
+                    results.append({
+                        'recognized': False, 'candidate_name': best.name,
+                        'candidate_student_id': best.student_id,
+                        'message': reason, 'match_status': 'liveness_required',
+                        'score': round(float(score), 3), 'liveness': False,
+                        'bbox': face['bbox'],
+                    })
+                else:
+                    snap = _save_snapshot(frame) if snapshot_enabled else ''
+                    ev = UnknownEvent.objects.create(
+                        best_score=max(0, float(score)), liveness_passed=live_ok,
+                        snapshot=snap or None, severity='HIGH' if live_ok else 'MEDIUM',
+                        message=reason, site=site,
+                    )
+                    SystemEvent.objects.create(
+                        event_type='unknown', message=reason,
+                        severity=ev.severity, site=site,
+                    )
+                    results.append({
+                        'recognized': False, 'message': reason,
+                        'match_status': 'unknown', 'score': round(max(0, float(score)), 3),
+                        'liveness': live_ok, 'bbox': face['bbox'], 'event_id': ev.id,
+                    })
         return JsonResponse({'status':'success','recognized':any(x['recognized'] for x in results),'face_count':len(results),'results':results,'threshold':threshold,'fps_hint':0})
     except Exception as exc:
         logger.exception('Recognition request failed (content_type=%s, body_bytes=%s)', request.content_type, len(request.body))

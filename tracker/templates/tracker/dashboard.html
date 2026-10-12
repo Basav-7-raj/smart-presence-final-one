@@ -136,18 +136,20 @@
       const width = Number(bbox[2]) || 0;
       const height = Number(bbox[3]) || 0;
       const element = document.createElement('div');
-      element.className = 'overlay-box ' + (result.recognized ? '' : 'unknown');
+      const awaitingLiveness = !result.recognized && result.match_status === 'liveness_required';
+      element.className = 'overlay-box ' + (result.recognized ? '' : (awaitingLiveness ? 'liveness-pending' : 'unknown'));
       // Apply the video's object-fit:cover crop and horizontal mirror to face coordinates.
       element.style.left = ((boxWidth - ((x + width) * scale + cropX)) / boxWidth * 100) + '%';
       element.style.top = ((y * scale + cropY) / boxHeight * 100) + '%';
       element.style.width = (width * scale / boxWidth * 100) + '%';
       element.style.height = (height * scale / boxHeight * 100) + '%';
       const title = document.createElement('b');
-      title.textContent = result.recognized ? (result.name || 'VERIFIED') : 'UNKNOWN';
+      title.textContent = result.recognized ? (result.name || 'VERIFIED') :
+        (awaitingLiveness ? ((result.candidate_name || 'FACE MATCHED') + ' · MOVE HEAD') : 'UNKNOWN');
       const details = document.createElement('small');
-      details.textContent = (result.recognized ? '✓ VERIFIED ' : '⚠ ') +
+      details.textContent = (result.recognized ? '✓ VERIFIED ' : (awaitingLiveness ? 'MATCH ' : '⚠ ')) +
         Math.round((Number(result.score) || 0) * 100) + '% · ' +
-        (result.liveness ? 'LIVE' : 'VERIFY');
+        (result.recognized ? 'LIVE' : (awaitingLiveness ? 'MOVE SLIGHTLY' : 'UNKNOWN'));
       element.appendChild(title);
       element.appendChild(document.createElement('br'));
       element.appendChild(details);
@@ -296,7 +298,9 @@
       onResults: function (body) {
         recognitionRequestState = 'RESPONDING';
         draw(body.results);
-        if (body.results.some(function (result) { return !result.recognized; })) alertUnknown();
+        if (body.results.some(function (result) {
+          return !result.recognized && result.match_status !== 'liveness_required';
+        })) alertUnknown();
         addEvents(body.results);
         if (fps) fps.textContent = (body.face_count || 0) + ' FACE(S) · LIVE';
         setIndicator('engineRecognition', 'RESPONDING', 'green');
