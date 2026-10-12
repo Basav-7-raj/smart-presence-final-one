@@ -2,12 +2,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.conf import settings
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
+from django.http import HttpResponse
+from tracker import views
 
 from tracker.models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent
 
 
 class DashboardTests(TestCase):
+    def test_dashboard_sets_csrf_cookie_for_browser_recognition(self):
+        # Stub template rendering; exercise the actual ensure_csrf_cookie decorator.
+        with patch("tracker.views.render", return_value=HttpResponse("ok")):
+            response = views.dashboard(RequestFactory().get("/"))
+        self.assertIn("csrftoken", response.cookies)
+
     def test_camera_requires_an_explicit_click_and_uses_controller_module(self):
         # Read the source template rather than using Client.get("/") here.
         # Django 4.2's template-render capture raises an internal Context.__copy__
