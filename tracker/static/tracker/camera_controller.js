@@ -243,6 +243,15 @@
         try {
           body = await response.json();
         } catch (error) {
+          if (!response.ok && response.status === 403) {
+            throw new Error('Request forbidden (403). CSRF validation or session failed; reload the page and verify trusted HTTPS proxy settings.');
+          }
+          if (!response.ok && response.status === 404) {
+            throw new Error('Recognition endpoint not found (404). Check the server route.');
+          }
+          if (!response.ok && response.status >= 500) {
+            throw new Error('Recognition server error (' + response.status + '). Check server diagnostics and model files.');
+          }
           throw new Error('/recognize/ returned invalid JSON (HTTP ' + response.status + ').');
         }
         if (!response.ok) {
