@@ -7,7 +7,7 @@ from django.http import HttpResponse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from tracker import views
 
-from tracker.models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent
+from tracker.models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent, LocationSite
 from tracker.face_engine import feature_templates_from_json
 
 
@@ -106,3 +106,41 @@ class MultiPhotoRegistrationTests(TestCase):
         self.assertEqual(response.json()["samples_saved"], 2)
         person = PersonProfile.objects.get(student_id="MULTI-001")
         self.assertEqual(feature_templates_from_json(person.encoding_json), [[0.1, 0.2], [0.3, 0.4]])
+
+
+
+class LocationAwareSiteTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        self.user = get_user_model().objects.create_user(username="location-admin", password="test-password-123")
+        self.client.force_login(self.user)
+
+    def test_create_and_select_fixed_camera_site(self):
+        response = self.client.post("/locations/save/", {
+            "name": "Main Gate Camera",
+            "address": "Main gate, campus",
+            "latitude": "12.971599",
+            "longitude": "77.594566",
+            "select_site": "1",
+        })
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        site = LocationSite.objects.get(name="Main Gate Camera")
+        self.assertEqual(str(site.latitude), "12.971599")
+        data = self.client.get("/locations/data/").json()
+        self.assertEqual(data["active_site_id"], site.id)
+        self.assertTrue(data["sites"][0]["selected"])
+
+    def test_reject_partial_coordinates(self):
+        response = self.client.post("/locations/save/", {
+            "name": "Address Only",
+            "address": "Building 2",
+            "latitude": "12.0",
+            "longitude": "",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(LocationSite.objects.filter(name="Address Only").exists())
+
+    def test_location_page_requires_admin_login(self):
+        self.client.logout()
+        response = self.client.get("/locations/")
+        self.assertEqual(response.status_code, 302)
