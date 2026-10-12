@@ -14,3 +14,8 @@ LANGUAGE_CODE='en-us'; TIME_ZONE='Asia/Kolkata'; USE_I18N=True; USE_TZ=True
 STATIC_URL='/static/'; STATIC_ROOT=BASE_DIR/'staticfiles'; MEDIA_URL='/media/'; MEDIA_ROOT=BASE_DIR/'media'
 DEFAULT_AUTO_FIELD='django.db.models.BigAutoField'
 LOGIN_URL='/admin-login/'; LOGIN_REDIRECT_URL='/admin-panel/'; LOGOUT_REDIRECT_URL='/'
+
+# Honor the original request scheme when running behind a trusted HTTPS development proxy.
+# Configure the proxy to overwrite this header; do not trust arbitrary client-supplied values.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in __import__('os').environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if origin.strip()]
