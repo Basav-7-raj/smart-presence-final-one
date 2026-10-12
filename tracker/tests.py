@@ -39,6 +39,24 @@ class HealthEndpointTests(TestCase):
         response = self.client.get("/health/")
         self.assertTrue(response.json()["database"])
 
+    def test_health_runs_inference_probe_instead_of_only_checking_file_presence(self):
+        with patch("tracker.views.models_ready", return_value=True), \\
+             patch("tracker.face_engine.get_models"), \\
+             patch("tracker.face_engine.detect_faces", return_value=[]):
+            response = self.client.get("/health/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["models_ready"])
+        self.assertTrue(response.json()["inference_ready"])
+        self.assertTrue(response.json()["ready"])
+
+    def test_health_reports_model_runtime_failure(self):
+        with patch("tracker.views.models_ready", return_value=True), \\
+             patch("tracker.face_engine.get_models", side_effect=RuntimeError("ONNX init failed")):
+            response = self.client.get("/health/")
+        self.assertFalse(response.json()["inference_ready"])
+        self.assertFalse(response.json()["ready"])
+        self.assertIn("ONNX init failed", response.json()["inference_error"])
+
 
 class RecognitionEndpointTests(TestCase):
     def test_invalid_frame_returns_visible_client_error(self):
