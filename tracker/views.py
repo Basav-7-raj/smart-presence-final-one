@@ -11,6 +11,7 @@ from django.http import JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.csrf import ensure_csrf_cookie
 from .face_engine import detect_faces, extract_best_feature, compare_features, feature_from_json, extract_feature_from_face, models_ready
 from .models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent, SystemSetting
 
@@ -39,6 +40,7 @@ def _present_people():
 def _save_snapshot(frame):
     folder=Path(settings.MEDIA_ROOT)/'unknown_events'; folder.mkdir(parents=True,exist_ok=True); name=f'unknown_{timezone.now().strftime("%Y%m%d_%H%M%S_%f")}.jpg'; path=folder/name; cv2.imwrite(str(path),frame); return f'unknown_events/{name}'
 
+@ensure_csrf_cookie
 def dashboard(request):
     bootstrap_settings(); return render(request,'tracker/dashboard.html',_context())
 @login_required
