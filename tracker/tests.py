@@ -4,9 +4,11 @@ from unittest.mock import patch
 from django.conf import settings
 from django.test import RequestFactory, TestCase
 from django.http import HttpResponse
+from django.core.files.uploadedfile import SimpleUploadedFile
 from tracker import views
 
 from tracker.models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent
+from tracker.face_engine import feature_templates_from_json
 
 
 class DashboardTests(TestCase):
@@ -76,3 +78,31 @@ class RegressionPreservationTests(TestCase):
         self.assertTrue(PresenceRecord)
         self.assertTrue(UnknownEvent)
         self.assertTrue(SystemEvent)
+
+
+class MultiPhotoRegistrationTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        self.user = get_user_model().objects.create_user(username="test-admin", password="test-password-123")
+        self.client.force_login(self.user)
+
+    def test_feature_parser_supports_legacy_and_multi_sample_profiles(self):
+        self.assertEqual(feature_templates_from_json('[0.1, 0.2]'), [[0.1, 0.2]])
+        self.assertEqual(feature_templates_from_json('[[0.1, 0.2], [0.3, 0.4]]'), [[0.1, 0.2], [0.3, 0.4]])
+
+    def test_registration_saves_embeddings_from_multiple_photos(self):
+        files = [
+            SimpleUploadedFile("front.jpg", b"front-image", content_type="image/jpeg"),
+            SimpleUploadedFile("angle.jpg", b"angle-image", content_type="image/jpeg"),
+        ]
+        with patch("tracker.views.cv2.imdecode", return_value=object()), \\
+             patch("tracker.views.extract_best_feature", side_effect=[([0.1, 0.2], {}), ([0.3, 0.4], {})]):
+            response = self.client.post("/register/", {
+                "name": "Test Person",
+                "student_id": "MULTI-001",
+                "images": files,
+            })
+        self.assertEqual(response.status_code, 200, response.content.decode())
+        self.assertEqual(response.json()["samples_saved"], 2)
+        person = PersonProfile.objects.get(student_id="MULTI-001")
+        self.assertEqual(feature_templates_from_json(person.encoding_json), [[0.1, 0.2], [0.3, 0.4]])
