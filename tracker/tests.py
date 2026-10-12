@@ -42,9 +42,11 @@ class HealthEndpointTests(TestCase):
         self.assertTrue(response.json()["database"])
 
     def test_health_runs_inference_probe_instead_of_only_checking_file_presence(self):
-        with patch("tracker.views.models_ready", return_value=True), \\
-             patch("tracker.face_engine.get_models"), \\
-             patch("tracker.face_engine.detect_faces", return_value=[]):
+        with (
+            patch("tracker.views.models_ready", return_value=True),
+            patch("tracker.face_engine.get_models"),
+            patch("tracker.face_engine.detect_faces", return_value=[]),
+        ):
             response = self.client.get("/health/")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["models_ready"])
@@ -52,8 +54,10 @@ class HealthEndpointTests(TestCase):
         self.assertTrue(response.json()["ready"])
 
     def test_health_reports_model_runtime_failure(self):
-        with patch("tracker.views.models_ready", return_value=True), \\
-             patch("tracker.face_engine.get_models", side_effect=RuntimeError("ONNX init failed")):
+        with (
+            patch("tracker.views.models_ready", return_value=True),
+            patch("tracker.face_engine.get_models", side_effect=RuntimeError("ONNX init failed")),
+        ):
             response = self.client.get("/health/")
         self.assertFalse(response.json()["inference_ready"])
         self.assertFalse(response.json()["ready"])
@@ -95,8 +99,10 @@ class MultiPhotoRegistrationTests(TestCase):
             SimpleUploadedFile("front.jpg", b"front-image", content_type="image/jpeg"),
             SimpleUploadedFile("angle.jpg", b"angle-image", content_type="image/jpeg"),
         ]
-        with patch("tracker.views.cv2.imdecode", return_value=object()), \\
-             patch("tracker.views.extract_best_feature", side_effect=[([0.1, 0.2], {}), ([0.3, 0.4], {})]):
+        with (
+            patch("tracker.views.cv2.imdecode", return_value=object()),
+            patch("tracker.views.extract_best_feature", side_effect=[([0.1, 0.2], {}), ([0.3, 0.4], {})]),
+        ):
             response = self.client.post("/register/", {
                 "name": "Test Person",
                 "student_id": "MULTI-001",
