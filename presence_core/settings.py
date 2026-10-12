@@ -18,4 +18,12 @@ LOGIN_URL='/admin-login/'; LOGIN_REDIRECT_URL='/admin-panel/'; LOGOUT_REDIRECT_U
 # Honor the original request scheme when running behind a trusted HTTPS development proxy.
 # Configure the proxy to overwrite this header; do not trust arbitrary client-supplied values.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in __import__('os').environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if origin.strip()]
+# Permit the two standard local development origins. Codespaces/remote HTTPS
+# origins should be added via the CSRF_TRUSTED_ORIGINS environment variable.
+_local_csrf_origins = ['http://localhost:8000', 'http://127.0.0.1:8000'] if DEBUG else []
+_env_csrf_origins = [
+    origin.strip()
+    for origin in __import__('os').environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
+]
+CSRF_TRUSTED_ORIGINS = _local_csrf_origins + _env_csrf_origins
