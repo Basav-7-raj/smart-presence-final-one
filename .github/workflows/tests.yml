@@ -1,0 +1,29 @@
+name: Smart Presence checks
+on:
+  pull_request:
+  push:
+    branches: [main, "fix/**"]
+jobs:
+  django-and-browser-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Django system check
+        run: python manage.py check
+      - name: Migration consistency
+        run: python manage.py makemigrations --check --dry-run
+      - name: Django tests
+        run: python manage.py test
+      - name: JavaScript syntax
+        run: node --check tracker/static/tracker/camera_controller.js
+      - name: Camera lifecycle mock tests
+        run: node --test tracker/static/tracker/camera_controller.test.cjs
