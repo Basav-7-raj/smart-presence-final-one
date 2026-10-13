@@ -82,10 +82,17 @@
       if (!fallbackUsed) return;
       document.getElementById('mapMessage').textContent = 'Map tiles could not load from either public provider. Check browser/network access to tile.openstreetmap.fr and tile.openstreetmap.de. Site data and pins are still available when coordinates are saved.';
     });
-    primaryTiles.addTo(map);
-    map.on('load', () => {
-      document.getElementById('mapMessage').textContent = 'Map tiles loaded from ' + tileProvider + '.';
+    primaryTiles.on('load', () => {
+      if (!fallbackUsed) {
+        document.getElementById('mapMessage').textContent = 'Map tiles loaded from ' + tileProvider + '.';
+      }
     });
+    fallbackTiles.on('load', () => {
+      if (fallbackUsed) {
+        document.getElementById('mapMessage').textContent = 'Map tiles loaded from ' + tileProvider + '.';
+      }
+    });
+    primaryTiles.addTo(map);
   } else {
     document.getElementById('mapMessage').textContent = 'Map library did not load from jsDelivr. Check your connection or browser network restrictions.';
   }
