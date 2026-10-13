@@ -28,7 +28,7 @@
   </section>
   <section class="card">
     <h3>Live monitored-site map</h3>
-    <p class="muted">Pins represent fixed camera sites. Select a pin to view its site and recent event counts. Map tiles are provided by CARTO using OpenStreetMap data.</p>
+    <p class="muted">Pins represent fixed camera sites. Select a pin to inspect it. The map uses OpenStreetMap-based tiles and does not require an API key.</p>
     <div id="siteMap" style="height:430px;border-radius:12px;overflow:hidden;background:#101827"></div>
     <p class="muted" id="mapMessage">Loading monitored sites…</p>
   </section>
@@ -56,13 +56,36 @@
   const when = value => { try { return new Date(value).toLocaleString(); } catch (_) { return value; } };
   if (window.L) {
     map = L.map('siteMap', { scrollWheelZoom: true }).setView([20.5937,78.9629], 5);
-    // The standard OSM tile endpoint is blocked for this deployment. Use CARTO's
-    // public Voyager raster tiles, with visible attribution to both data/style providers.
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      subdomains: 'abcd',
+
+    // Use public OSM-derived raster services that do not require API keys.
+    // If the primary tile host fails, switch once to a separate provider.
+    let tileProvider = 'OpenStreetMap France HOT';
+    let fallbackUsed = false;
+    const primaryTiles = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+      subdomains: 'abc',
       maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>'
-    }).addTo(map);
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors, style by <a href="https://www.hotosm.org/" target="_blank" rel="noopener">Humanitarian OpenStreetMap Team</a>'
+    });
+    const fallbackTiles = L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+    });
+    primaryTiles.on('tileerror', () => {
+      if (fallbackUsed) return;
+      fallbackUsed = true;
+      tileProvider = 'OpenStreetMap.de fallback';
+      map.removeLayer(primaryTiles);
+      fallbackTiles.addTo(map);
+      document.getElementById('mapMessage').textContent = 'The primary map tile service failed; trying the backup map service…';
+    });
+    fallbackTiles.on('tileerror', () => {
+      if (!fallbackUsed) return;
+      document.getElementById('mapMessage').textContent = 'Map tiles could not load from either public provider. Check browser/network access to tile.openstreetmap.fr and tile.openstreetmap.de. Site data and pins are still available when coordinates are saved.';
+    });
+    primaryTiles.addTo(map);
+    map.on('load', () => {
+      document.getElementById('mapMessage').textContent = 'Map tiles loaded from ' + tileProvider + '.';
+    });
   } else {
     document.getElementById('mapMessage').textContent = 'Map library did not load from jsDelivr. Check your connection or browser network restrictions.';
   }
