@@ -52,6 +52,8 @@
   const msg = document.getElementById('siteMessage');
   let map = null;
   let markers = [];
+  let deviceLocationMarker = null;
+  let deviceAccuracyCircle = null;
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const when = value => { try { return new Date(value).toLocaleString(); } catch (_) { return value; } };
   if (window.L) {
@@ -116,10 +118,40 @@
     navigator.geolocation.getCurrentPosition(position => {
       const lat = position.coords.latitude;
       const lon = position.coords.longitude;
+      const accuracy = Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null;
       document.getElementById('siteLat').value = lat.toFixed(6);
       document.getElementById('siteLon').value = lon.toFixed(6);
-      if (map) map.setView([lat, lon], 16);
-      msg.textContent = 'Coordinates filled: ' + lat.toFixed(6) + ', ' + lon.toFixed(6) + '. Now enter a site name and click “Save monitored site”. Location permission only fills this fixed site; it does not save or track anyone automatically.';
+
+      // Show an actual device-location pin and its reported accuracy radius.
+      // This preview is not a saved monitored camera site until the form is saved.
+      if (map) {
+        const point = [lat, lon];
+        if (deviceLocationMarker) map.removeLayer(deviceLocationMarker);
+        if (deviceAccuracyCircle) map.removeLayer(deviceAccuracyCircle);
+        deviceLocationMarker = L.marker(point, {title: 'Current device location'}).addTo(map);
+        deviceLocationMarker.bindPopup(
+          '<b>Current device location</b><br>' +
+          'Latitude: ' + lat.toFixed(6) + '<br>' +
+          'Longitude: ' + lon.toFixed(6) + '<br>' +
+          'Reported accuracy: ' + (accuracy == null ? 'not provided' : Math.round(accuracy) + ' metres') +
+          '<br><small>Preview only — save the form to create a camera-site pin.</small>'
+        ).openPopup();
+        if (accuracy != null && accuracy > 0) {
+          deviceAccuracyCircle = L.circle(point, {
+            radius: accuracy,
+            color: '#1687ff',
+            weight: 2,
+            fillColor: '#1687ff',
+            fillOpacity: 0.12
+          }).addTo(map);
+        }
+        map.setView(point, accuracy != null && accuracy > 1000 ? 13 : 17);
+      }
+
+      const accuracyText = accuracy == null ? 'Browser did not report an accuracy radius.' :
+        'Reported accuracy radius: about ' + Math.round(accuracy) + ' metres.';
+      msg.textContent = 'Device location found: ' + lat.toFixed(6) + ', ' + lon.toFixed(6) +
+        '. ' + accuracyText + ' A blue pin and accuracy circle are shown on the map. Enter a site name and click “Save monitored site” to save a fixed camera site.';
       msg.className = 'green';
       useLocationButton.disabled = false;
       useLocationButton.textContent = "Use this device's location for the fixed site";
@@ -133,7 +165,7 @@
       msg.className = 'red';
       useLocationButton.disabled = false;
       useLocationButton.textContent = "Use this device's location for the fixed site";
-    }, {enableHighAccuracy:false, timeout:20000, maximumAge:30000});
+    }, {enableHighAccuracy:true, timeout:30000, maximumAge:0});
   };
   form.onsubmit = async event => {
     event.preventDefault();
@@ -150,6 +182,11 @@
       msg.className = result.status === 'success' ? 'green' : 'red';
       if (response.ok && result.status === 'success') {
         form.reset();
+        // The saved-site marker will replace the temporary device-location preview.
+        if (map && deviceLocationMarker) map.removeLayer(deviceLocationMarker);
+        if (map && deviceAccuracyCircle) map.removeLayer(deviceAccuracyCircle);
+        deviceLocationMarker = null;
+        deviceAccuracyCircle = null;
         msg.textContent = result.message + ' The site is now saved.';
         msg.className = 'green';
         await load();
