@@ -28,7 +28,7 @@
   </section>
   <section class="card">
     <h3>Live monitored-site map</h3>
-    <p class="muted">Pins represent fixed camera sites. Select a pin to view its site and recent event counts. Map tiles are supplied by OpenStreetMap.</p>
+    <p class="muted">Pins represent fixed camera sites. Select a pin to view its site and recent event counts. Map tiles are provided by CARTO using OpenStreetMap data.</p>
     <div id="siteMap" style="height:430px;border-radius:12px;overflow:hidden;background:#101827"></div>
     <p class="muted" id="mapMessage">Loading monitored sites…</p>
   </section>
@@ -55,23 +55,55 @@
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const when = value => { try { return new Date(value).toLocaleString(); } catch (_) { return value; } };
   if (window.L) {
-    map = L.map('siteMap').setView([20.5937,78.9629], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom:19, attribution:'&copy; OpenStreetMap contributors'
+    map = L.map('siteMap', { scrollWheelZoom: true }).setView([20.5937,78.9629], 5);
+    // The standard OSM tile endpoint is blocked for this deployment. Use CARTO's
+    // public Voyager raster tiles, with visible attribution to both data/style providers.
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      subdomains: 'abcd',
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>'
     }).addTo(map);
   } else {
-    document.getElementById('mapMessage').textContent = 'Map library did not load. Check network access to unpkg.com.';
+    document.getElementById('mapMessage').textContent = 'Map library did not load from jsDelivr. Check your connection or browser network restrictions.';
   }
-  document.getElementById('useLocation').onclick = () => {
-    if (!navigator.geolocation) { msg.textContent = 'This browser does not provide location permission.'; return; }
-    msg.textContent = 'Requesting permission to locate this fixed camera site…';
+
+  const useLocationButton = document.getElementById('useLocation');
+  useLocationButton.onclick = () => {
+    if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      msg.textContent = 'Browser location requires HTTPS. Open the HTTPS Codespaces port URL, not an HTTP preview.';
+      msg.className = 'red';
+      return;
+    }
+    if (!navigator.geolocation) {
+      msg.textContent = 'This browser does not expose geolocation. Enter the fixed camera latitude and longitude manually.';
+      msg.className = 'red';
+      return;
+    }
+    useLocationButton.disabled = true;
+    useLocationButton.textContent = 'Getting device location…';
+    msg.textContent = 'Waiting for browser permission and GPS/network location…';
+    msg.className = 'muted';
     navigator.geolocation.getCurrentPosition(position => {
-      document.getElementById('siteLat').value = position.coords.latitude.toFixed(6);
-      document.getElementById('siteLon').value = position.coords.longitude.toFixed(6);
-      msg.textContent = 'Coordinates filled in. Save the site to use them. This does not track people.';
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+      document.getElementById('siteLat').value = lat.toFixed(6);
+      document.getElementById('siteLon').value = lon.toFixed(6);
+      if (map) map.setView([lat, lon], 16);
+      msg.textContent = 'Coordinates filled: ' + lat.toFixed(6) + ', ' + lon.toFixed(6) + '. Now enter a site name and click “Save monitored site”. Location permission only fills this fixed site; it does not save or track anyone automatically.';
+      msg.className = 'green';
+      useLocationButton.disabled = false;
+      useLocationButton.textContent = "Use this device's location for the fixed site";
     }, error => {
-      msg.textContent = 'Could not get coordinates: ' + error.message + '. You can enter the fixed site coordinates manually.';
-    }, {enableHighAccuracy:true, timeout:10000, maximumAge:60000});
+      const reasons = {
+        1: 'Location permission was denied. Allow location for this HTTPS website in your browser site settings.',
+        2: 'Your device could not determine a location. Enable device location services or enter the coordinates manually.',
+        3: 'The location request timed out. Try again near a window or enter coordinates manually.'
+      };
+      msg.textContent = (reasons[error.code] || ('Location failed: ' + error.message)) + ' This button does not save the site; after coordinates appear, click Save monitored site.';
+      msg.className = 'red';
+      useLocationButton.disabled = false;
+      useLocationButton.textContent = "Use this device's location for the fixed site";
+    }, {enableHighAccuracy:false, timeout:20000, maximumAge:30000});
   };
   form.onsubmit = async event => {
     event.preventDefault();
@@ -86,7 +118,12 @@
       const result = await response.json();
       msg.textContent = result.message || 'Could not save site.';
       msg.className = result.status === 'success' ? 'green' : 'red';
-      if (response.ok) { form.reset(); await load(); }
+      if (response.ok && result.status === 'success') {
+        form.reset();
+        msg.textContent = result.message + ' The site is now saved.';
+        msg.className = 'green';
+        await load();
+      }
     } catch (error) {
       msg.textContent = 'Save failed: ' + error.message;
       msg.className = 'red';
@@ -127,8 +164,17 @@
           marker.bindPopup('<b>'+esc(s.name)+'</b><br>'+esc(s.address||'')+'<br>'+(s.selected?'Active camera site':'Configured site'));
           markers.push(marker);
         });
-        if (located.length) { const group=L.featureGroup(markers); map.fitBounds(group.getBounds().pad(0.18), {maxZoom:15}); document.getElementById('mapMessage').textContent=located.length+' site pin(s) shown. Address-only sites are listed but cannot be pinned until coordinates are entered.'; }
-        else { map.setView([20.5937,78.9629],5); document.getElementById('mapMessage').textContent='No coordinates yet. Enter latitude and longitude or use the location button for the fixed camera site.'; }
+        if (located.length) {
+          const group = L.featureGroup(markers);
+          map.fitBounds(group.getBounds().pad(0.18), {maxZoom:15});
+          document.getElementById('mapMessage').textContent = located.length + ' mapped site(s). Select a pin to inspect its fixed camera site.';
+        } else {
+          map.setView([20.5937,78.9629],5);
+          document.getElementById('mapMessage').textContent = data.sites.length
+            ? 'Sites are saved, but none has coordinates. Edit a site with latitude and longitude to show map pins.'
+            : 'No sites saved yet. Enter a site name and address, use the location button or enter coordinates, then click Save monitored site.';
+        }
+        window.setTimeout(() => map.invalidateSize(), 100);
       }
       document.querySelectorAll('[data-select]').forEach(button => button.onclick = async () => {
         try { await post('/locations/'+button.dataset.select+'/select/'); await load(); }
