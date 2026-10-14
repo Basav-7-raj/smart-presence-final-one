@@ -17,7 +17,7 @@ from .models import PersonProfile, PresenceRecord, UnknownEvent, SystemEvent, Sy
 
 logger = logging.getLogger(__name__)
 
-DEFAULTS = {'match_threshold':'0.363','liveness_threshold':'0.018','unknown_alert':'1','sound_alert':'1','auto_capture_unknown':'1','duplicate_window':'10','camera':'0','theme':'dark'}
+DEFAULTS = {'match_threshold':'0.45','liveness_threshold':'0.018','unknown_alert':'1','sound_alert':'1','auto_capture_unknown':'1','duplicate_window':'10','camera':'0','theme':'dark'}
 _liveness_state = {}
 
 
@@ -156,74 +156,144 @@ def delete_person(request, pk):
 @require_POST
 def recognize(request):
     try:
-        frame=cv2.imdecode(np.frombuffer(request.body,np.uint8),cv2.IMREAD_COLOR)
-        if frame is None: return JsonResponse({'status':'error','message':'Invalid frame.'},status=400)
-        faces=detect_faces(frame); people=list(PersonProfile.objects.filter(active=True)); client=_client_key(request); results=[]; threshold=float(setting('match_threshold') or .363); snapshot_enabled=setting('auto_capture_unknown')=='1'; site=_active_site()
+        frame = cv2.imdecode(np.frombuffer(request.body, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            return JsonResponse({"status": "error", "message": "Invalid frame."}, status=400)
+
+        faces = detect_faces(frame)
+        people = list(PersonProfile.objects.filter(active=True))
+        client = _client_key(request)
+        results = []
+        # Conservative initial threshold. Existing database settings cannot
+        # silently lower this minimum.
+        threshold = max(float(setting("match_threshold") or 0.45), 0.45)
+        ambiguity_margin = 0.08
+        snapshot_enabled = setting("auto_capture_unknown") == "1"
+        site = _active_site()
+
         for face in faces:
-            raw=np.zeros((15,),dtype=np.float32); raw[:4]=face['bbox']; raw[4:14]=np.asarray(face['landmarks']).reshape(-1); raw[14]=face['score']; feature=extract_feature_from_face(frame,raw)
-            best=None; score=-1
+            raw = np.zeros((15,), dtype=np.float32)
+            raw[:4] = face["bbox"]
+            raw[4:14] = np.asarray(face["landmarks"]).reshape(-1)
+            raw[14] = face["score"]
+            feature = extract_feature_from_face(frame, raw)
+
+            # Score each identity across its saved photos. Averaging the top
+            # three scores reduces reliance on one unusually high comparison.
+            candidates = []
             for person in people:
                 try:
-                    # Match against every registered photo and keep that person's
-                    # strongest cosine similarity. Supports existing single-photo rows.
                     templates = feature_templates_from_json(person.encoding_json)
-                    person_score = max(
+                    scores = sorted(
                         (compare_features(feature, template) for template in templates),
-                        default=-1,
+                        reverse=True,
                     )
-                    if person_score > score:
-                        score = person_score
-                        best = person
+                    if scores:
+                        aggregate = float(np.mean(scores[:min(3, len(scores))]))
+                        candidates.append((aggregate, person))
                 except Exception:
-                    logger.exception('Could not compare face template for person_id=%s', person.pk)
-            live_ok,live_msg=_liveness_check(client,face)
-            verified=best is not None and score>=threshold and live_ok
-            if verified:
-                window=int(setting('duplicate_window') or 10); since=timezone.now()-timedelta(minutes=window)
-                if not PresenceRecord.objects.filter(person=best,timestamp__gte=since).exists():
-                    PresenceRecord.objects.create(person=best,confidence=float(score),liveness_passed=True,site=site)
-                    SystemEvent.objects.create(event_type='verified',message=f'{best.name} verified',severity='INFO',person=best,site=site)
-                results.append({'recognized':True,'name':best.name,'student_id':best.student_id,'score':round(float(score),3),'liveness':True,'bbox':face['bbox']})
-            else:
-                matched_candidate = best is not None and score >= threshold
-                reason = (
-                    'Face matched; move your head slightly for liveness verification.'
-                    if matched_candidate and not live_ok else 'Unknown person.'
-                )
-                # A strong face match that is still awaiting liveness is not an
-                # unknown-person event. Record a liveness event instead.
-                if matched_candidate and not live_ok:
-                    SystemEvent.objects.create(
-                        event_type='liveness', message=reason, severity='MEDIUM',
-                        person=best, site=site,
-                    )
+                    logger.exception("Face comparison failed for person_id=%s", person.pk)
+
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            best_score, best_person = candidates[0] if candidates else (-1.0, None)
+            second_score = candidates[1][0] if len(candidates) > 1 else -1.0
+            strong_match = (
+                best_person is not None
+                and best_score >= threshold
+                and (second_score < 0 or best_score - second_score >= ambiguity_margin)
+            )
+
+            if strong_match:
+                live_ok, live_msg = _liveness_check(client, face)
+                if live_ok:
+                    window = int(setting("duplicate_window") or 10)
+                    since = timezone.now() - timedelta(minutes=window)
+                    if not PresenceRecord.objects.filter(person=best_person, timestamp__gte=since).exists():
+                        PresenceRecord.objects.create(
+                            person=best_person,
+                            confidence=best_score,
+                            liveness_passed=True,
+                            site=site,
+                        )
+                        SystemEvent.objects.create(
+                            event_type="verified",
+                            message=f"{best_person.name} verified",
+                            severity="INFO",
+                            person=best_person,
+                            site=site,
+                        )
                     results.append({
-                        'recognized': False, 'candidate_name': best.name,
-                        'candidate_student_id': best.student_id,
-                        'message': reason, 'match_status': 'liveness_required',
-                        'score': round(float(score), 3), 'liveness': False,
-                        'bbox': face['bbox'],
+                        "recognized": True,
+                        "name": best_person.name,
+                        "student_id": best_person.student_id,
+                        "score": round(best_score, 3),
+                        "liveness": True,
+                        "match_status": "verified",
+                        "bbox": face["bbox"],
                     })
                 else:
-                    snap = _save_snapshot(frame) if snapshot_enabled else ''
-                    ev = UnknownEvent.objects.create(
-                        best_score=max(0, float(score)), liveness_passed=live_ok,
-                        snapshot=snap or None, severity='HIGH' if live_ok else 'MEDIUM',
-                        message=reason, site=site,
-                    )
                     SystemEvent.objects.create(
-                        event_type='unknown', message=reason,
-                        severity=ev.severity, site=site,
+                        event_type="liveness",
+                        message="Potential match; liveness verification required.",
+                        severity="MEDIUM",
+                        person=best_person,
+                        site=site,
                     )
+                    # Do not expose the candidate name as a confirmed identity
+                    # until both identity matching and liveness have passed.
                     results.append({
-                        'recognized': False, 'message': reason,
-                        'match_status': 'unknown', 'score': round(max(0, float(score)), 3),
-                        'liveness': live_ok, 'bbox': face['bbox'], 'event_id': ev.id,
+                        "recognized": False,
+                        "message": live_msg,
+                        "match_status": "liveness_required",
+                        "score": round(best_score, 3),
+                        "liveness": False,
+                        "bbox": face["bbox"],
                     })
-        return JsonResponse({'status':'success','recognized':any(x['recognized'] for x in results),'face_count':len(results),'results':results,'threshold':threshold,'fps_hint':0})
-    except Exception as exc:
-        logger.exception('Recognition request failed (content_type=%s, body_bytes=%s)', request.content_type, len(request.body))
-        return JsonResponse({'status':'error','message':str(exc)},status=500)
+            else:
+                snap = _save_snapshot(frame) if snapshot_enabled else ""
+                ev = UnknownEvent.objects.create(
+                    best_score=max(0.0, best_score),
+                    liveness_passed=False,
+                    snapshot=snap or None,
+                    severity="MEDIUM",
+                    message="Unknown or ambiguous identity.",
+                    site=site,
+                )
+                SystemEvent.objects.create(
+                    event_type="unknown",
+                    message="Unknown or ambiguous identity.",
+                    severity="MEDIUM",
+                    site=site,
+                )
+                results.append({
+                    "recognized": False,
+                    "message": "Unknown person or ambiguous match.",
+                    "match_status": "unknown",
+                    "score": round(max(0.0, best_score), 3),
+                    "liveness": False,
+                    "bbox": face["bbox"],
+                    "event_id": ev.id,
+                })
+
+        return JsonResponse({
+            "status": "success",
+            "recognized": any(result["recognized"] for result in results),
+            "face_count": len(results),
+            "results": results,
+            "threshold": threshold,
+            "fps_hint": 0,
+        })
+    except Exception:
+        logger.exception(
+            "Recognition request failed (content_type=%s, body_bytes=%s)",
+            request.content_type,
+            len(request.body),
+        )
+        return JsonResponse(
+            {"status": "error", "message": "Recognition failed. Check server logs."},
+            status=500,
+        )
+
 
 
 
