@@ -147,7 +147,7 @@
     useLocationButton.textContent = 'Getting device location…';
     msg.textContent = 'Waiting for browser permission and GPS/network location…';
     msg.className = 'muted';
-    navigator.geolocation.getCurrentPosition(position => {
+    navigator.geolocation.getCurrentPosition(async position => {
       const lat = position.coords.latitude;
       const lon = position.coords.longitude;
       const accuracy = Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null;
@@ -165,8 +165,9 @@
           const place = await lookup.json(), a = place.address || {};
           const area = a.road || a.pedestrian || a.neighbourhood || a.suburb || a.village || a.town || a.city || a.county;
           const city = a.city || a.town || a.village || a.county || a.state;
-          if (!nameField.value.trim()) nameField.value = ([area,city].filter(Boolean).filter((x,i,arr)=>arr.indexOf(x)===i).join(' - ') || 'Camera site ' + lat.toFixed(4) + ', ' + lon.toFixed(4)).slice(0,120);
-          if (!addressField.value.trim()) addressField.value = place.display_name || (lat.toFixed(6) + ', ' + lon.toFixed(6));
+          // The user explicitly requested this button to populate all site fields.
+          nameField.value = ([area,city].filter(Boolean).filter((x,i,arr)=>arr.indexOf(x)===i).join(' - ') || 'Camera site ' + lat.toFixed(4) + ', ' + lon.toFixed(4)).slice(0,120);
+          addressField.value = place.display_name || (lat.toFixed(6) + ', ' + lon.toFixed(6));
         }
       } catch (_) {}
       if (!nameField.value.trim()) nameField.value = 'Camera site ' + lat.toFixed(4) + ', ' + lon.toFixed(4);
@@ -195,7 +196,7 @@
             fillOpacity: 0.12
           }).addTo(map);
         }
-        map.setView(point, accuracy != null && accuracy > 1000 ? 13 : 17);
+        map.setView(point, accuracy != null && accuracy > 1000 ? 15 : 18);
       }
 
       const accuracyText = accuracy == null ? 'Browser did not report an accuracy radius.' :
