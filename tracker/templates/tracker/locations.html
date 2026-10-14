@@ -28,7 +28,7 @@
   </section>
   <section class="card">
     <h3>Live monitored-site map</h3>
-    <p class="muted">Pins represent fixed camera sites. Select a pin to inspect it. The map uses OpenStreetMap-based tiles and does not require an API key.</p>
+    <p class="muted">Search for a street or city, or use this device’s location. Device location is for the device opening this page; use search to configure a camera site in another city.</p><div class="toolbar" style="margin:10px 0"><input class="input" id="placeSearch" placeholder="Search street / area / city (e.g. Kalaburagi, Karnataka)" aria-label="Search map place"><button class="btn secondary" id="searchPlace" type="button">Find place</button></div>
     <div id="siteMap" style="height:430px;border-radius:12px;overflow:hidden;background:#101827"></div>
     <p class="muted" id="mapMessage">Loading monitored sites…</p>
   </section>
@@ -99,6 +99,38 @@
     document.getElementById('mapMessage').textContent = 'Map library did not load from jsDelivr. Check your connection or browser network restrictions.';
   }
 
+  const placeSearch = document.getElementById('placeSearch');
+  const searchPlaceButton = document.getElementById('searchPlace');
+  searchPlaceButton.onclick = async () => {
+    const query = (placeSearch.value || '').trim();
+    if (!query) { msg.textContent = 'Enter a street, area or city to search.'; msg.className = 'red'; return; }
+    searchPlaceButton.disabled = true; searchPlaceButton.textContent = 'Searching…';
+    msg.textContent = 'Searching OpenStreetMap…'; msg.className = 'muted';
+    try {
+      const response = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=' + encodeURIComponent(query), {headers:{'Accept':'application/json'}});
+      if (!response.ok) throw new Error('Map search returned HTTP ' + response.status);
+      const places = await response.json();
+      if (!places.length) throw new Error('No matching place found. Try adding district and state.');
+      const place = places[0], lat = Number(place.lat), lon = Number(place.lon);
+      document.getElementById('siteLat').value = lat.toFixed(6);
+      document.getElementById('siteLon').value = lon.toFixed(6);
+      if (!document.getElementById('siteAddress').value.trim()) document.getElementById('siteAddress').value = place.display_name || query;
+      if (!document.getElementById('siteName').value.trim()) {
+        const bits = (place.display_name || query).split(',').map(x => x.trim()).filter(Boolean);
+        document.getElementById('siteName').value = (bits.slice(0,2).join(' - ') || 'Camera site').slice(0,120);
+      }
+      if (map) {
+        map.setView([lat,lon],16);
+        if (deviceLocationMarker) map.removeLayer(deviceLocationMarker);
+        if (deviceAccuracyCircle) map.removeLayer(deviceAccuracyCircle);
+        deviceLocationMarker = L.marker([lat,lon],{title:'Searched place'}).addTo(map);
+        deviceLocationMarker.bindPopup('<b>Searched place</b><br>'+esc(place.display_name||query)).openPopup();
+      }
+      msg.textContent = 'Place found. Site name, address and coordinates are filled. Review them and click Save monitored site.';
+      msg.className = 'green';
+    } catch(error) { msg.textContent = error.message + ' You can also enter coordinates manually.'; msg.className = 'red'; }
+    finally { searchPlaceButton.disabled = false; searchPlaceButton.textContent = 'Find place'; }
+  };
   const useLocationButton = document.getElementById('useLocation');
   useLocationButton.onclick = () => {
     if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
@@ -121,6 +153,24 @@
       const accuracy = Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null;
       document.getElementById('siteLat').value = lat.toFixed(6);
       document.getElementById('siteLon').value = lon.toFixed(6);
+
+      // Best-effort reverse geocoding: fill the site name and address as well.
+      const nameField = document.getElementById('siteName');
+      const addressField = document.getElementById('siteAddress');
+      try {
+        const lookup = await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=' +
+          encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon) + '&zoom=18&addressdetails=1',
+          {headers:{'Accept':'application/json'}});
+        if (lookup.ok) {
+          const place = await lookup.json(), a = place.address || {};
+          const area = a.road || a.pedestrian || a.neighbourhood || a.suburb || a.village || a.town || a.city || a.county;
+          const city = a.city || a.town || a.village || a.county || a.state;
+          if (!nameField.value.trim()) nameField.value = ([area,city].filter(Boolean).filter((x,i,arr)=>arr.indexOf(x)===i).join(' - ') || 'Camera site ' + lat.toFixed(4) + ', ' + lon.toFixed(4)).slice(0,120);
+          if (!addressField.value.trim()) addressField.value = place.display_name || (lat.toFixed(6) + ', ' + lon.toFixed(6));
+        }
+      } catch (_) {}
+      if (!nameField.value.trim()) nameField.value = 'Camera site ' + lat.toFixed(4) + ', ' + lon.toFixed(4);
+      if (!addressField.value.trim()) addressField.value = lat.toFixed(6) + ', ' + lon.toFixed(6);
 
       // Show an actual device-location pin and its reported accuracy radius.
       // This preview is not a saved monitored camera site until the form is saved.
@@ -151,7 +201,7 @@
       const accuracyText = accuracy == null ? 'Browser did not report an accuracy radius.' :
         'Reported accuracy radius: about ' + Math.round(accuracy) + ' metres.';
       msg.textContent = 'Device location found: ' + lat.toFixed(6) + ', ' + lon.toFixed(6) +
-        '. ' + accuracyText + ' A blue pin and accuracy circle are shown on the map. Enter a site name and click “Save monitored site” to save a fixed camera site.';
+        '. ' + accuracyText + ' Site name and address are filled when map data is available. Review and click “Save monitored site”.';
       msg.className = 'green';
       useLocationButton.disabled = false;
       useLocationButton.textContent = "Use this device's location for the fixed site";
