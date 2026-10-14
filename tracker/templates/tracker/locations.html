@@ -4,7 +4,6 @@
 <div class="grid g3">
   <div class="card"><span class="muted">MONITORED SITES</span><div class="stat blue" id="siteCount">{{ sites|length }}</div></div>
   <div class="card"><span class="muted">ACTIVE CAMERA SITE</span><div class="stat green" id="activeSiteName">{% if active_site %}{{ active_site.name }}{% else %}NOT SELECTED{% endif %}</div></div>
-  <div class="card"><span class="muted">LOCATION PRIVACY</span><div class="stat">FIXED SITES ONLY</div><p class="muted">No individual GPS tracking. A site is attached to recognition events from this browser camera.</p></div>
 </div>
 <div class="grid g2" style="margin-top:16px;align-items:start">
   <section class="card">
