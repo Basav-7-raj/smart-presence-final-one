@@ -157,27 +157,44 @@
     });
   }
 
+  const recentLiveKeys = new Map();
+  let eventHistoryLoaded = false;
   function addEvents(results) {
     const eventsEl = document.getElementById('events');
     if (!eventsEl) return;
-    const now = new Date().toLocaleTimeString();
+    const now = new Date();
     (results || []).forEach(function (result) {
+      const key = result.recognized ? 'known:' + (result.student_id || result.name || '') : 'unknown:' + (result.message || 'unknown');
+      const previous = recentLiveKeys.get(key);
+      if (previous && now.getTime() - previous < 8000) return;
+      recentLiveKeys.set(key, now.getTime());
       const item = document.createElement('div');
       item.className = 'event';
       const title = document.createElement('strong');
       title.className = result.recognized ? 'green' : 'red';
-      title.textContent = result.recognized ?
-        (result.name || 'Verified') + ' verified' :
-        (result.message || 'Unknown person detected');
+      title.textContent = result.recognized ? (result.name || 'Verified') + ' verified' : (result.message || 'Unknown person detected');
       const time = document.createElement('small');
-      time.textContent = now + (result.recognized ?
-        ' · ' + Math.round((Number(result.score) || 0) * 100) + '% confidence' :
-        ' · event recorded');
-      item.appendChild(title);
-      item.appendChild(time);
-      eventsEl.prepend(item);
+      time.textContent = now.toLocaleTimeString() + (result.recognized ? ' · ' + Math.round((Number(result.score) || 0) * 100) + '% similarity' : ' · review required');
+      item.appendChild(title); item.appendChild(time); eventsEl.prepend(item);
+      while (eventsEl.children.length > 10) eventsEl.lastElementChild.remove();
     });
-    while (eventsEl.children.length > 10) eventsEl.lastElementChild.remove();
+    recentLiveKeys.forEach(function(stamp,key){ if(now.getTime()-stamp>60000) recentLiveKeys.delete(key); });
+  }
+  function renderEventHistory(events) {
+    const eventsEl = document.getElementById('events');
+    if (!eventsEl || eventHistoryLoaded) return;
+    eventHistoryLoaded = true;
+    eventsEl.replaceChildren();
+    (events || []).slice(0,8).forEach(function(event){
+      const item=document.createElement('div'); item.className='event';
+      const title=document.createElement('strong');
+      title.className=event.type==='unknown'||event.severity==='HIGH'?'red':(event.type==='verified'?'green':'muted');
+      title.textContent=event.message||'System event';
+      const time=document.createElement('small');
+      try { time.textContent=new Date(event.timestamp).toLocaleString(); } catch (_) { time.textContent=event.timestamp||''; }
+      item.appendChild(title); item.appendChild(time); eventsEl.appendChild(item);
+    });
+    if(!events||!events.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No recorded events yet. Start the camera to see live recognition and unknown-person alerts here.';eventsEl.appendChild(empty);}
   }
 
   async function readJsonResponse(response, endpoint) {
@@ -204,6 +221,7 @@
     try {
       const response = await fetch('/events/', { credentials: 'same-origin', cache: 'no-store' });
       const body = await readJsonResponse(response, '/events/');
+      renderEventHistory(body.events || []);
       const present = document.getElementById('present');
       const unknown = document.getElementById('unknown');
       if (present) present.textContent = (body.present || []).length;
