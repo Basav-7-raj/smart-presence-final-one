@@ -149,6 +149,29 @@
       document.getElementById('siteLat').value = lat.toFixed(6);
       document.getElementById('siteLon').value = lon.toFixed(6);
 
+      // Fill the site name and address from these coordinates when possible.
+      // Preserve any name/address the user has already typed.
+      const siteNameInput = document.getElementById('siteName');
+      const siteAddressInput = document.getElementById('siteAddress');
+      try {
+        const lookup = await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=' +
+          encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon) + '&zoom=18&addressdetails=1',
+          {headers:{'Accept':'application/json'}});
+        if (lookup.ok) {
+          const place = await lookup.json();
+          const a = place.address || {};
+          const area = a.road || a.pedestrian || a.neighbourhood || a.suburb || a.village || a.town || a.city || a.county;
+          const city = a.city || a.town || a.village || a.county || a.state;
+          const suggestedName = [area, city].filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).join(' - ');
+          if (!siteNameInput.value.trim()) siteNameInput.value = (suggestedName || 'Camera site ' + lat.toFixed(4) + ', ' + lon.toFixed(4)).slice(0,120);
+          if (!siteAddressInput.value.trim()) siteAddressInput.value = place.display_name || (lat.toFixed(6) + ', ' + lon.toFixed(6));
+        }
+      } catch (_) {
+        // GPS coordinates remain usable when optional reverse geocoding is offline.
+      }
+      if (!siteNameInput.value.trim()) siteNameInput.value = 'Camera site ' + lat.toFixed(4) + ', ' + lon.toFixed(4);
+      if (!siteAddressInput.value.trim()) siteAddressInput.value = lat.toFixed(6) + ', ' + lon.toFixed(6);
+
       // Show an actual device-location pin and its reported accuracy radius.
       // This preview is not a saved monitored camera site until the form is saved.
       if (map) {
@@ -178,7 +201,7 @@
       const accuracyText = accuracy == null ? 'Browser did not report an accuracy radius.' :
         'Reported accuracy radius: about ' + Math.round(accuracy) + ' metres.';
       msg.textContent = 'Device location found: ' + lat.toFixed(6) + ', ' + lon.toFixed(6) +
-        '. ' + accuracyText + ' A blue pin and accuracy circle are shown on the map. Enter a site name and click “Save monitored site” to save a fixed camera site.';
+        '. ' + accuracyText + ' Site name and address were filled when map data was available. Review them and click “Save monitored site”.';
       msg.className = 'green';
       useLocationButton.disabled = false;
       useLocationButton.textContent = "Use this device's location for the fixed site";
